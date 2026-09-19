@@ -19,7 +19,7 @@ use iced::widget::text_editor;
 use iced::window;
 use iced::{Element, Event, Font, Length, Padding, Pixels, Point, Rectangle, Size, Vector};
 
-use crate::code_editor::decoration::diagnostic;
+use crate::code_editor::decoration::{diagnostic, inlay};
 use crate::code_editor::{Content, geometry, gutter};
 
 /// A multi-line code editor.
@@ -76,6 +76,10 @@ where
     gutter: Option<gutter::Style>,
     diagnostics: &'a [diagnostic::Diagnostic],
     diagnostic_style: Box<dyn Fn(diagnostic::Severity) -> diagnostic::Style + 'a>,
+    inlay_hints: &'a [inlay::Hint<'a>],
+    // `None` until a caller asks for a look, because the default one needs the theme's
+    // dimmed color and the resolved text size, and neither is known until `draw`.
+    inlay_style: Option<inlay::Style>,
     class: Theme::Class<'a>,
     // A `type` alias would only move this signature somewhere the reader has to chase it; iced
     // turns the lint off for the whole workspace for the same reason.
@@ -132,6 +136,8 @@ where
             gutter: None,
             diagnostics: &[],
             diagnostic_style: Box::new(diagnostic::Style::from),
+            inlay_hints: &[],
+            inlay_style: None,
             class: <Theme as text_editor::Catalog>::default(),
             key_binding: None,
             on_edit: None,
@@ -247,6 +253,30 @@ where
         self
     }
 
+    /// Overlays the given [`Hint`](inlay::Hint)s on the text.
+    ///
+    /// The hints are borrowed for the same reason the diagnostics are: they are
+    /// application state, replaced wholesale on every round-trip with whatever
+    /// produces them.
+    ///
+    /// They are *overlays*, not text. A hint paints over whatever is beneath it
+    /// and never reserves room, reflows a line, moves the caret, or takes part
+    /// in hit-testing — so a label anchored inside a line overlaps the code
+    /// there, and a click through it lands on the character underneath.
+    pub fn inlay_hints(mut self, hints: &'a [inlay::Hint<'a>]) -> Self {
+        self.inlay_hints = hints;
+        self
+    }
+
+    /// Sets how the hints are drawn.
+    ///
+    /// Defaults to [`inlay::Style::new`] over the color the theme dims text to
+    /// and the editor's own text size.
+    pub fn inlay_style(mut self, style: inlay::Style) -> Self {
+        self.inlay_style = Some(style);
+        self
+    }
+
     /// Highlights the [`CodeEditor`] with the given [`text::Parser`] and
     /// [`text::Highlighter`].
     pub fn highlight_with<P: text::Parser>(
@@ -268,6 +298,8 @@ where
             gutter: self.gutter,
             diagnostics: self.diagnostics,
             diagnostic_style: self.diagnostic_style,
+            inlay_hints: self.inlay_hints,
+            inlay_style: self.inlay_style,
             class: self.class,
             key_binding: self.key_binding,
             on_edit: self.on_edit,
@@ -702,6 +734,61 @@ where
                 );
             }
         }
+
+        let text_size = self.text_size.unwrap_or_else(|| renderer.text_size());
+        let inlay_style = self
+            .inlay_style
+            .unwrap_or_else(|| inlay::Style::new(style.placeholder, text_size));
+
+        // Resolved against the code's size and not the label's: a relative line height is a
+        // multiple of the text it belongs to, and shrinking the label's line box with the
+        // label would lift it off the row it annotates.
+        let line_height = self
+            .line_height
+            .unwrap_or_else(|| renderer.line_height())
+            .to_absolute(text_size);
+
+        let label = text::Text {
+            content: (),
+            // A hint is one row that never wraps, so only the height bounds anything, and
+            // matching the code's line height is what sits the label on the code's own row.
+            bounds: Size::new(f32::INFINITY, line_height.into()),
+            size: text_size * inlay_style.size_scale,
+            line_height: text::LineHeight::Absolute(line_height),
+            font,
+            align_x: text::Alignment::Default,
+            align_y: alignment::Vertical::Top,
+            // Labels carry arrows, type names, and whatever script the thing producing them
+            // writes in; `Basic` would mangle all three.
+            shaping: text::Shaping::Advanced,
+            wrapping: text::Wrapping::None,
+            ellipsis: text::Ellipsis::None,
+            // The renderer's factor, not the editor's: this is text being shaped now, not a
+            // measurement of text the editor already shaped.
+            hint_factor: renderer.hint_factor(),
+        };
+
+        // Hints are overlays. Nothing above this loop knows they exist: they reserve no room,
+        // reflow nothing, and are not hit-tested, so a label anchored inside a line simply
+        // paints over the code there. Text is drawn after every quad in a layer, so a label
+        // lands above the squiggles without any ordering work — and an opaque chip behind one
+        // would need a layer push, which is why there is none.
+        for hint in self.inlay_hints {
+            // An anchor the buffer cannot place — scrolled out of view, or past the end of
+            // its line — is simply not drawn.
+            let Some(anchor) =
+                geometry::position_anchor(content.buffer(), hint_factor, hint.position)
+            else {
+                continue;
+            };
+
+            renderer.fill_text(
+                label.with_content(hint.label.to_string()),
+                anchor + translation + inlay_style.offset,
+                inlay_style.color,
+                clip_bounds,
+            );
+        }
     }
 
     fn mouse_interaction(
@@ -795,6 +882,27 @@ mod tests {
         spacing: 8.0,
     };
 
+    /// The text size the recorded editors below are drawn at.
+    ///
+    /// Written down rather than left to the renderer's default so a label's own
+    /// size can be checked against a number a test chose.
+    const TEXT_SIZE: f32 = 14.0;
+
+    /// The line height the recorded editors below are drawn at, as a multiple
+    /// of [`TEXT_SIZE`].
+    ///
+    /// Relative rather than absolute, so that a label resolving it against its
+    /// own smaller size instead of the code's comes out a different box.
+    const LINE_HEIGHT_SCALE: f32 = 1.5;
+
+    /// A hint look with a color, a scale, and an offset no default would
+    /// produce, so an assertion against it cannot pass by accident.
+    const HINT: inlay::Style = inlay::Style {
+        color: Color::from_rgb(1.0, 0.0, 1.0),
+        size_scale: 0.5,
+        offset: Vector::new(3.0, -7.0),
+    };
+
     /// The viewport the recorded draws below happen in.
     ///
     /// Tall enough that nothing a test writes is cut off the bottom, and narrow
@@ -805,6 +913,14 @@ mod tests {
     /// test asks for something else.
     fn squiggle() -> diagnostic::Style {
         diagnostic::Style::from(diagnostic::Severity::Error)
+    }
+
+    /// A hint anchored at `index` of `line`.
+    fn hint(line: usize, index: usize, label: &str) -> inlay::Hint<'_> {
+        inlay::Hint {
+            position: Position { line, index },
+            label: label.into(),
+        }
     }
 
     /// A diagnostic over `bytes` of `line`.
@@ -1155,13 +1271,24 @@ mod tests {
         );
     }
 
-    /// A renderer that records the quads it is asked to fill and draws nothing.
+    /// A `fill_text` call, as the widget issued it.
+    #[derive(Debug, Clone)]
+    struct Filled {
+        text: text::Text,
+        position: Point,
+        color: Color,
+        clip_bounds: Rectangle,
+    }
+
+    /// A renderer that records what it is asked to fill and draws nothing.
     ///
-    /// Squiggles are quads, and a `Simulator` hands back no pixels a test can
-    /// read, so the draw calls themselves are the only place to look.
+    /// Squiggles are quads and hints are text, and a `Simulator` hands back no
+    /// pixels a test can read, so the draw calls themselves are the only place
+    /// to look.
     #[derive(Debug, Default)]
     struct Probe {
         quads: Vec<(renderer::Quad, Background)>,
+        texts: Vec<Filled>,
     }
 
     impl Probe {
@@ -1174,6 +1301,14 @@ mod tests {
                 .iter()
                 .filter(|(_, background)| *background == Background::Color(color))
                 .map(|(quad, _)| *quad)
+                .collect()
+        }
+
+        /// The text filled, in the order it was issued.
+        fn labels(&self) -> Vec<&str> {
+            self.texts
+                .iter()
+                .map(|filled| filled.text.content.as_str())
                 .collect()
         }
     }
@@ -1246,11 +1381,17 @@ mod tests {
 
         fn fill_text(
             &mut self,
-            _text: text::Text,
-            _position: Point,
-            _color: Color,
-            _clip_bounds: Rectangle,
+            text: text::Text,
+            position: Point,
+            color: Color,
+            clip_bounds: Rectangle,
         ) {
+            self.texts.push(Filled {
+                text,
+                position,
+                color,
+                clip_bounds,
+            });
         }
     }
 
@@ -1713,5 +1854,342 @@ mod tests {
         // The budget the plan sets for a screenful. Coarsening the wavelength is the first
         // lever if this ever has to give.
         assert!(segments < 2000, "{segments} segments in one frame");
+    }
+
+    /// [`record`]s an editor over `content` carrying `hints`.
+    ///
+    /// No padding of its own, so the text origin is the widget's own corner and
+    /// a recorded label needs no offset to compare against the buffer's
+    /// geometry. With no gutter, and content for the placeholder to stay out
+    /// of, every `fill_text` it records is a hint.
+    fn overlaid(content: &Content, hints: &[inlay::Hint<'_>], wrapping: text::Wrapping) -> Probe {
+        record(
+            code_editor(content)
+                .padding(0.0)
+                .size(TEXT_SIZE)
+                .line_height(text::LineHeight::Relative(LINE_HEIGHT_SCALE))
+                .wrapping(wrapping)
+                .on_action(Message::Edit)
+                .inlay_hints(hints),
+        )
+    }
+
+    #[test]
+    fn hints_do_not_shift_source_text() {
+        let source = "alpha bravo charlie\ndelta echo\n\nfoxtrot";
+        let hints = [
+            // Mid-line and left of where the click below lands, on a blank line, past the
+            // end of the buffer, and long enough to run off the right edge: every shape
+            // that would move a glyph if hints were virtual text rather than an overlay.
+            hint(0, 6, ": usize"),
+            hint(2, 0, "→ ()"),
+            hint(
+                3,
+                7,
+                "  // a label far wider than the line it is anchored to",
+            ),
+            hint(9, 0, ": nowhere"),
+        ];
+
+        let mut plain = Content::with_text(source);
+        let mut annotated = Content::with_text(source);
+
+        // Inside the first line and right of the first hint's anchor, so a hint that
+        // reserved room for itself would put a different character under the cursor.
+        let at = Point::new(46.0, 8.0);
+
+        // The element borrows the content, so the simulator has to be gone before the
+        // resulting actions can be performed on it.
+        let interact = |content: &Content, hints: &[inlay::Hint<'_>]| {
+            let mut ui = simulator(editor(content, None).inlay_hints(hints).id("code-editor"));
+
+            ui.point_at(at);
+            let _ = ui.simulate(simulator::click());
+            let _ = ui.typewrite("x");
+
+            let bounds = ui
+                .find(iced_test::selector::id("code-editor"))
+                .expect("the editor carries that id")
+                .bounds();
+
+            let actions: Vec<Action> = ui
+                .into_messages()
+                .map(|Message::Edit(action)| action)
+                .collect();
+
+            (bounds, actions)
+        };
+
+        let (plain_bounds, plain_actions) = interact(&plain, &[]);
+        let (annotated_bounds, annotated_actions) = interact(&annotated, &hints);
+
+        assert!(
+            matches!(plain_actions.first(), Some(Action::Click(..))),
+            "the click has to have landed for this to test anything"
+        );
+
+        // `Action::Click` carries the editor-relative point the widget resolved, so
+        // comparing the actions compares the click-to-caret mapping itself and not only
+        // the caret it happened to leave behind.
+        assert_eq!(annotated_bounds, plain_bounds);
+        assert_eq!(annotated_actions, plain_actions);
+
+        for action in plain_actions {
+            plain.perform(action);
+        }
+
+        for action in annotated_actions {
+            annotated.perform(action);
+        }
+
+        assert_ne!(annotated.text(), source, "the typing has to have landed");
+        assert_eq!(annotated.text(), plain.text());
+        assert_eq!(annotated.cursor(), plain.cursor());
+    }
+
+    #[test]
+    fn a_hint_is_drawn_at_its_anchor_measured_from_the_text_origin() {
+        const PADDING: f32 = 9.0;
+
+        let content = Content::with_text("alpha bravo");
+        let hints = [hint(0, 6, ": usize")];
+
+        let probe = record(
+            code_editor(&content)
+                .padding(PADDING)
+                .size(TEXT_SIZE)
+                .font(Font::MONOSPACE)
+                .wrapping(text::Wrapping::None)
+                .on_action(Message::Edit)
+                .inlay_hints(&hints)
+                .inlay_style(HINT),
+        );
+
+        let anchor = {
+            let editor = content.0.borrow();
+            let hint_factor = editor.hint_factor().unwrap_or(1.0);
+
+            geometry::position_anchor(editor.buffer(), hint_factor, Position { line: 0, index: 6 })
+                .expect("column 6 of the first line is on screen")
+        };
+
+        assert!(anchor.x > 0.0, "column 6 is not the left edge");
+
+        let [label] = probe.texts.as_slice() else {
+            panic!("one hint should be drawn once");
+        };
+
+        assert_eq!(label.text.content, ": usize");
+        assert_eq!(label.color, HINT.color);
+        assert_eq!(label.text.size, Pixels(TEXT_SIZE) * HINT.size_scale);
+
+        // The editor's own font, so a label reads as an annotation of this code rather
+        // than as text from somewhere else.
+        assert_eq!(label.text.font, Font::MONOSPACE);
+
+        // An anchor is a top-left corner, and both backends move the position by the
+        // label's shaped size for every alignment but these two.
+        assert_eq!(label.text.align_x, text::Alignment::Default);
+        assert_eq!(label.text.align_y, alignment::Vertical::Top);
+
+        // Anchors are measured from the text origin, so the padding the editor is inset by
+        // has to be added back before anything is drawn.
+        assert_eq!(
+            label.position,
+            anchor + Vector::new(PADDING, PADDING) + HINT.offset
+        );
+
+        // The same clip the glyphs themselves are drawn under, so a label is never visible
+        // where its text is not.
+        assert_eq!(
+            label.clip_bounds,
+            Rectangle::new(Point::new(PADDING, PADDING), content.0.borrow().bounds())
+        );
+    }
+
+    #[test]
+    fn a_hint_without_a_style_takes_its_look_from_the_theme_and_the_text_size() {
+        let content = Content::with_text("alpha bravo");
+        let hints = [hint(0, 6, ": usize")];
+
+        let probe = overlaid(&content, &hints, text::Wrapping::None);
+
+        let anchor = {
+            let editor = content.0.borrow();
+            let hint_factor = editor.hint_factor().unwrap_or(1.0);
+
+            geometry::position_anchor(editor.buffer(), hint_factor, Position { line: 0, index: 6 })
+                .expect("column 6 of the first line is on screen")
+        };
+
+        // `record` draws the light theme, and nothing has written a status yet.
+        let style = text_editor::default(&iced::Theme::Light, text_editor::Status::Active);
+        let expected = inlay::Style::new(style.placeholder, Pixels(TEXT_SIZE));
+
+        let [label] = probe.texts.as_slice() else {
+            panic!("one hint should be drawn once");
+        };
+
+        assert_ne!(
+            expected.color, style.value,
+            "a hint has to be told apart from the code it annotates"
+        );
+
+        assert_eq!(label.color, expected.color);
+        assert_eq!(label.text.size, Pixels(TEXT_SIZE) * expected.size_scale);
+        assert!(label.text.size < Pixels(TEXT_SIZE));
+        assert_eq!(label.position, anchor + expected.offset);
+
+        // The label's line box is the code's, so the smaller glyphs sit on the row they
+        // annotate. Resolving the editor's relative line height against the label's own
+        // size instead would shrink the box and lift them off it.
+        assert_eq!(
+            label.text.line_height,
+            text::LineHeight::Absolute(Pixels(TEXT_SIZE * LINE_HEIGHT_SCALE))
+        );
+    }
+
+    #[test]
+    fn a_hint_is_drawn_as_text_and_never_as_a_chip_behind_it() {
+        let content = Content::with_text("alpha bravo");
+        let hints = [hint(0, 6, ": usize")];
+
+        let bare = overlaid(&content, &[], text::Wrapping::None);
+        let annotated = overlaid(&content, &hints, text::Wrapping::None);
+
+        assert!(bare.texts.is_empty());
+        assert_eq!(annotated.labels(), [": usize"]);
+
+        // A quad behind the label would land *beneath* the source text, since both
+        // backends draw every quad in a layer before any of its text, so the code would
+        // show through it. Doing it properly needs a layer push, which is why there is no
+        // chip at all.
+        assert_eq!(annotated.quads.len(), bare.quads.len());
+    }
+
+    #[test]
+    fn a_hint_scrolled_out_of_view_is_not_drawn() {
+        let source: String = (0..200).map(|line| format!("line {line}\n")).collect();
+        let mut content = Content::with_text(&source);
+
+        let hints = [hint(0, 0, ": first"), hint(40, 0, ": later")];
+
+        assert_eq!(
+            overlaid(&content, &hints, text::Wrapping::None).labels(),
+            [": first"],
+            "line 40 starts below the viewport"
+        );
+
+        // The draw above gave the editor the bounds this scroll is clamped against.
+        content.perform(Action::Scroll { lines: 30 });
+
+        assert_eq!(
+            overlaid(&content, &hints, text::Wrapping::None).labels(),
+            [": later"],
+            "a hint tracks its line out of view and back in again"
+        );
+    }
+
+    #[test]
+    fn a_hint_anchored_past_the_end_of_its_line_is_not_drawn() {
+        let content = Content::with_text("alpha\nbravo");
+
+        let hints = [
+            hint(0, 5, "→ end"),
+            hint(0, 40, ": past the line"),
+            hint(99, 0, ": past the buffer"),
+        ];
+
+        // The end of a line is a place; two bytes further along is not, and neither is a
+        // line the buffer does not have. Both resolve to no anchor and are dropped.
+        assert_eq!(
+            overlaid(&content, &hints, text::Wrapping::None).labels(),
+            ["→ end"]
+        );
+    }
+
+    #[test]
+    fn a_hint_at_a_wrap_boundary_anchors_to_the_previous_row() {
+        // One unbroken token wrapped by glyph, because that is the only break that leaves
+        // a byte belonging to both rows: a word wrap falls on a space, whose glyph is
+        // dropped from both rows, so the byte that ends the first row and the byte that
+        // starts the second are two different bytes and neither is ambiguous.
+        let token = "alphabravocharliedeltaechofoxtrotgolfhotelindiajuliettkilolimamike";
+        let content = Content::with_text(token);
+
+        // One draw to shape the buffer, so the rows the boundary is read off exist.
+        assert!(
+            overlaid(&content, &[], text::Wrapping::Glyph)
+                .texts
+                .is_empty()
+        );
+
+        let (boundary, first_top, first_width, second_top) = {
+            let editor = content.0.borrow();
+            let mut runs = editor.buffer().layout_runs();
+
+            let first = runs.next().expect("the buffer should have a first row");
+            let second = runs.next().expect("the token has to wrap");
+
+            let boundary = first
+                .glyphs
+                .iter()
+                .map(|glyph| glyph.end)
+                .max()
+                .expect("the first row should have glyphs");
+
+            assert_eq!(
+                Some(boundary),
+                second.glyphs.iter().map(|glyph| glyph.start).min(),
+                "the boundary byte has to belong to both rows for this to test anything"
+            );
+
+            (boundary, first.line_top, first.line_w, second.line_top)
+        };
+
+        let hints = [hint(0, boundary, ": usize")];
+        let probe = overlaid(&content, &hints, text::Wrapping::Glyph);
+
+        let [label] = probe.texts.as_slice() else {
+            panic!("one hint should be drawn once");
+        };
+
+        let style = text_editor::default(&iced::Theme::Light, text_editor::Status::Active);
+        let offset = inlay::Style::new(style.placeholder, Pixels(TEXT_SIZE)).offset;
+
+        // `Buffer::cursor_position` ignores `Cursor::affinity`, so of the two rows this
+        // byte belongs to it takes the earlier — and the hint lands at the far right edge
+        // of the row above the one a reader would expect. Accepted for now; whoever
+        // teaches the anchor about affinity should find this test failing rather than a
+        // silent shift.
+        assert_eq!(label.position.y, first_top + offset.y);
+        assert_ne!(label.position.y, second_top + offset.y);
+        assert!((label.position.x - offset.x - first_width).abs() < 0.01);
+    }
+
+    #[test]
+    fn a_non_ascii_hint_label_is_shaped_in_full_and_never_reflowed() {
+        let content = Content::with_text("alpha bravo");
+        let label = "→ Vec<String>, 日本語, 👋🏽";
+        let hints = [hint(0, 6, label)];
+
+        // A wrapping editor, so a label that inherited the editor's strategy instead of
+        // stating its own would show it here.
+        let probe = overlaid(&content, &hints, text::Wrapping::Word);
+
+        let [drawn] = probe.texts.as_slice() else {
+            panic!("one hint should be drawn once");
+        };
+
+        assert_eq!(drawn.text.content, label);
+
+        // `Basic` resolves no clusters and falls back to no other font, which turns an
+        // arrow, a CJK run, and a modified emoji into boxes.
+        assert_eq!(drawn.text.shaping, text::Shaping::Advanced);
+
+        // A hint is one row: reflowing it would push it onto the line below, and eliding
+        // it would hide the type it exists to report.
+        assert_eq!(drawn.text.wrapping, text::Wrapping::None);
+        assert_eq!(drawn.text.ellipsis, text::Ellipsis::None);
     }
 }
