@@ -1,0 +1,14 @@
+# Pin the test renderer to tiny-skia.
+#
+# `iced_test::Simulator` builds its own renderer per instance, and with the wgpu
+# backend each one calls `vkCreateInstance`. Several test threads doing that at
+# once segfaults inside the host Vulkan loader — measured at 3 failures in 6 runs
+# here, and reproducible on commits that predate any of this crate's simulator
+# tests, so it is the loader rather than anything matcha does.
+#
+# tiny-skia is software-rendered, has no such global setup, and is ~2.4x faster.
+# It is also what iced itself uses for its in-tree snapshots, and
+# `Snapshot::path` suffixes baselines with the renderer name, so a tiny-skia
+# baseline can never be confused with a wgpu one.
+[env]
+ICED_TEST_BACKEND = "tiny-skia"
