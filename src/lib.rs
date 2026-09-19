@@ -8,6 +8,6 @@
 pub mod code_editor;
 
 pub use code_editor::{
-    Action, Binding, Content, Cursor, Edit, KeyPress, Line, LineEnding, Motion, Position,
-    Selection,
+    Action, Binding, CodeEditor, Content, Cursor, Edit, KeyPress, Line, LineEnding, Motion,
+    Position, Selection, code_editor,
 };
