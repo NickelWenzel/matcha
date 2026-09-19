@@ -3,7 +3,7 @@
 use iced::widget::{column, pick_list, row, space, text, toggler};
 use iced::{Center, Element, Fill, Font, Theme};
 
-use matcha::{Action, Content, code_editor};
+use matcha::{Action, Content, code_editor, gutter};
 
 pub fn main() -> iced::Result {
     iced::application(Showcase::new, Showcase::update, Showcase::view)
@@ -120,6 +120,18 @@ impl Showcase {
                 .height(Fill)
                 .placeholder("Type something here...")
                 .on_action(Message::Edit)
+                .gutter(gutter::Style {
+                    // The editor's own text color, dimmed, so the eye reads the code first
+                    // and the numbers still follow the theme.
+                    color: self
+                        .theme
+                        .palette()
+                        .background
+                        .weakest
+                        .text
+                        .scale_alpha(0.5),
+                    spacing: 12.0,
+                })
                 .wrapping(if self.word_wrap {
                     text::Wrapping::Word
                 } else {
