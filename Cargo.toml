@@ -1,0 +1,29 @@
+[package]
+name = "matcha"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.93"
+license = "MIT"
+description = "A code editor widget for iced with diagnostics, inlay hints, and a line-number gutter"
+repository = "https://github.com/NickelWenzel/matcha"
+
+# A renderer backend (`wgpu` or `tiny-skia`, both default) is mandatory: without one
+# `iced_renderer::Renderer` resolves to `()`, whose `text::Renderer::Editor` is also `()`,
+# and the widget's `Renderer::Editor = graphics::text::Editor` bound stops typechecking.
+[dependencies]
+iced = { git = "https://github.com/iced-rs/iced", rev = "fa3bae52874274c012a27d4bf11a83c49e1709ae", features = [
+    "advanced",
+    "highlighter",
+] }
+
+# `fira-sans` embeds a known font so shaped-geometry assertions do not depend on whatever
+# fonts the host machine happens to have. `iced_test` must come from the same git rev as
+# `iced`; a crates.io build would pull its own `iced_core` and the `Element`/`Renderer`
+# types would not unify.
+[dev-dependencies]
+iced = { git = "https://github.com/iced-rs/iced", rev = "fa3bae52874274c012a27d4bf11a83c49e1709ae", features = [
+    "advanced",
+    "highlighter",
+    "fira-sans",
+] }
+iced_test = { git = "https://github.com/iced-rs/iced", rev = "fa3bae52874274c012a27d4bf11a83c49e1709ae" }
