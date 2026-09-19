@@ -20,9 +20,9 @@ So matcha owns a `graphics::text::Editor` directly and reads geometry from
 
 | | |
 | --- | --- |
-| Rust source | `Cargo.toml` + 3 files, ~150 lines — Phase 1 done |
-| Tests | 6 passing; `cargo clippy --all-targets -- -D warnings` clean |
-| Branch | `master`, everything **untracked — nothing committed yet** |
+| Rust source | `Cargo.toml` + 5 files + 1 example, ~950 lines — Phases 1-2 done |
+| Tests | 8 unit + 1 doctest passing; `cargo clippy --all-targets -- -D warnings` clean |
+| Branch | `code-editor-widget`, 10 commits, working tree clean, **not pushed** |
 | Planning | complete — plan critiqued, one blocker found and fixed, FOSS-compared against cosmic-edit |
 
 Phase 1 built in 1m32s including the cold fetch of the three git forks. `cargo tree --depth 1`
@@ -42,7 +42,7 @@ a self-contained doc a subagent can execute without reading the others.
 | Phase | Doc | Status |
 | --- | --- | --- |
 | 1 — Crate skeleton + `Content` | [MAP_PHASE_1.md](MAP_PHASE_1.md) | **done** 2026-09-19 |
-| 2 — `CodeEditor` at parity with `TextEditor` | [MAP_PHASE_2.md](MAP_PHASE_2.md) | pending |
+| 2 — `CodeEditor` at parity with `TextEditor` | [MAP_PHASE_2.md](MAP_PHASE_2.md) | **done** 2026-09-19 |
 | 3 — `geometry.rs` + decoration types | [MAP_PHASE_3.md](MAP_PHASE_3.md) | pending |
 | 4 — Line-number gutter | [MAP_PHASE_4.md](MAP_PHASE_4.md) | pending |
 | 5 — Diagnostic squiggles | [MAP_PHASE_5.md](MAP_PHASE_5.md) | pending |
@@ -51,20 +51,25 @@ a self-contained doc a subagent can execute without reading the others.
 
 Order: `1 → 2 → 3 → 4 → {5, 6} → 7`. Phases 5 and 6 are independent and may run in parallel.
 
-## What to build next: Phase 2
+## What to build next: Phase 3
 
-Port `TextEditor`'s structure into `src/code_editor/widget.rs` — the struct, all builders, and the
-`Widget` impl — substituting our `Content` for the one with the private field. Reference is
-`/home/nickel/Programming/repos/iced/widget/src/text_editor.rs:94-620`; the port is close to
-mechanical and every deviation from upstream is a future bug.
+`geometry.rs` plus the decoration types — the pure functions mapping logical text positions to
+screen rectangles and points. This is where all the real complexity lives, and none of it touches
+the widget. Risk A is already retired, so implement the design as written; Step 0 of the phase doc
+records the fork verification rather than asking for it.
 
-Start with **Step 1b**, a decision Phase 1 deliberately deferred: `Content` currently has neither
-`Debug` nor `Clone`. `Clone` must never be derived — `graphics::text::Editor` is an `Arc` whose
-`with_internal_mut` does `Arc::try_unwrap(..).expect(..)`, so a derived `Clone` compiles and then
-panics on the next mutation. iced hand-writes it as a full reshape for exactly this reason.
+The three functions are `range_fragments`, `position_anchor`, and `visible_line_rows`. Four
+constraints are load-bearing and each is explained in the phase doc: the `.filter` on `line_i` (a
+diagnostic would otherwise squiggle every visible line), subtracting `scroll.horizontal` but never
+`scroll.vertical`, the minimum-width fallback for blank lines and zero-width ranges, and the
+structural first-visual-row test.
 
-Also fold the `code_editor` helper fn into `src/lib.rs`'s re-export once it exists — Phase 1
-re-exports only `Content`, because naming a function that does not exist does not compile.
+Geometry is unit-testable headlessly — build a `graphics::text::Editor`, call `update(..)`, and
+assert. No renderer, no window. The `fira-sans` dev-feature is already in the manifest to keep
+shaping deterministic.
+
+Use `matcha::Action` and friends in any new example or doc, never
+`iced::advanced::text::editor::Action` — Phase 2 re-exported them for that reason.
 
 ## Known risks and debt
 

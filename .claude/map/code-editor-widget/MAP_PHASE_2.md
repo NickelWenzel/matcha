@@ -20,6 +20,25 @@ scroll, word wrap toggling, and Rust syntax highlighting all work.
 writing.** The port is close to mechanical; the only substantive change is swapping
 `self.content.0.borrow()` (private, 5 call sites) for our own `Content`.
 
+## Step 0 — Make the editor reachable from `widget.rs`
+
+iced gets away with `self.content.0.borrow_mut()` because `Content` and `TextEditor` live in the
+**same file**. matcha splits them: `Content` is in `code_editor::content`, the widget is in
+`code_editor::widget`. Those are *siblings*, so the private tuple field is not reachable from the
+widget and the port will not compile as written upstream.
+
+Fix it in `content.rs` by widening the field exactly one level:
+
+```rust
+pub struct Content(pub(super) RefCell<text::Editor>);
+```
+
+`pub(super)` here means "visible in `code_editor`", and visibility is inherited by descendant
+modules, so `code_editor::widget` can reach it while the field stays private to the crate's
+outside world. Do **not** make it `pub`, and do not add `editor()` / `editor_mut()` accessor
+methods — they would be two new names on a public type to do what one visibility modifier already
+does, and the field is used directly at five call sites in the port.
+
 ## Step 1 — The widget struct
 
 `src/code_editor/widget.rs`:
@@ -47,8 +66,26 @@ where
     parser_settings: Parser::Settings,
     highlighter: Option<Box<dyn text::Highlighter<Parser::Output, Theme> + 'a>>,
     last_status: Option<Status>,
+    // Required: see below.
+    renderer: PhantomData<Renderer>,
 }
 ```
+
+**The `PhantomData` is not optional.** iced carries `Renderer` through
+`content: &'a Content<Renderer>`; our `Content` is concrete, so nothing else in the struct mentions
+the parameter and it fails to compile with E0392. Two knock-on effects:
+
+- A `&'a` field would have given `Renderer: 'a` as an *implied bound*. `PhantomData` does not, so
+  the `From<CodeEditor<'a, ..>> for Element<'a, ..>` impl needs an explicit `Renderer: 'a` that
+  upstream does not have.
+- `key_binding`'s verbatim type trips `clippy::type_complexity`. iced allows that lint
+  workspace-wide (`iced/Cargo.toml:254`); matcha does not, so it needs a targeted `#[allow]` on the
+  field. Do **not** fix it with a type alias (it just moves the signature somewhere the reader has
+  to chase) or a crate-wide allow.
+
+The alternative — dropping `Renderer` from the struct and bounding it only on the `Widget` and
+`From` impls — also compiles and avoids the `PhantomData`. It was not taken because this doc
+specifies the struct signature and matching upstream's shape keeps the port mechanical.
 
 The `Renderer: text::Renderer<Editor = graphics::text::Editor>` bound is the crux — it is what lets
 us hand our concrete `Content` to `State::draw::<Renderer>` and reach `buffer()` in Phase 3. All
@@ -241,6 +278,21 @@ headless session. Report that the example is ready and let the human run it.
 | Toggle wrapping | Long line reflows; no panic |
 | Switch theme | Syntax colors update immediately, not after the next keypress |
 | `.on_action` omitted | Widget is read-only and does not publish messages |
+
+## Recorded while implementing
+
+- **`&*content` is mandatory, not stylistic, at three sites.** `editor::State::update` and
+  `::input_method` take `&impl Editor` — a *generic parameter*, and deref coercion does not fire
+  through one, so `&content` infers `T = Ref<Editor>` and fails the bound. `State::draw` takes
+  `&Renderer::Editor` and fails with `expected RefMut<'_, Editor>, found Editor`.
+- **`class()` was left out of the builder list.** Upstream has it at `:307-313` behind iced's own
+  `advanced` feature. Three lines if parity is wanted later.
+- **The editor types are re-exported from the crate root** (`Action`, `Binding`, `Cursor`, `Edit`,
+  `KeyPress`, `Line`, `LineEnding`, `Motion`, `Selection`, `Position`). Naming `Action` is
+  unavoidable for anyone calling `on_action`, and it lives under the feature-gated
+  `iced::advanced`. Mirrors `iced::widget::text_editor`'s set plus `Position`, which iced omits but
+  which is needed to build a `Cursor`. Later phases and their examples should use `matcha::Action`,
+  never `iced::advanced::text::editor::Action`.
 
 ## Do NOT change in this phase
 
