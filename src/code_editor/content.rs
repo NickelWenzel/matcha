@@ -11,11 +11,26 @@ use iced::advanced::text::editor::{self, Editor as _};
 /// private field, this owns the [`text::Editor`] outright — the shaped buffer
 /// inside it is the only source of the glyph geometry that diagnostics, inlay
 /// hints, and the gutter are placed against.
-pub struct Content(RefCell<text::Editor>);
+#[derive(Debug)]
+// The widget is a sibling module, so it needs `pub(super)` to reach the editor at all; a pair
+// of accessors would put two more names on a public type to do the same job.
+pub struct Content(pub(super) RefCell<text::Editor>);
 
 impl Default for Content {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+/// Reshapes the text from scratch.
+///
+/// [`text::Editor`] is an `Arc` that mutates through
+/// `Arc::try_unwrap`, so a second strong reference to the same editor would
+/// panic on the next edit. Cloning therefore has to cost a full reshape, as it
+/// does in iced.
+impl Clone for Content {
+    fn clone(&self) -> Self {
+        Self::with_text(&self.text())
     }
 }
 
