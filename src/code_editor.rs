@@ -2,6 +2,7 @@
 
 pub mod decoration;
 pub mod geometry;
+pub mod gutter;
 
 mod content;
 mod widget;
