@@ -5,7 +5,7 @@ use std::ops::Range;
 use iced::widget::{column, pick_list, row, space, text, toggler};
 use iced::{Center, Element, Fill, Font, Theme};
 
-use matcha::decoration::{TextRange, diagnostic};
+use matcha::decoration::{TextRange, diagnostic, inlay};
 use matcha::{Action, Content, Position, code_editor, gutter};
 
 pub fn main() -> iced::Result {
@@ -66,6 +66,7 @@ struct Showcase {
     theme: Theme,
     word_wrap: bool,
     diagnostics: Vec<diagnostic::Diagnostic>,
+    hints: Vec<inlay::Hint<'static>>,
 }
 
 #[derive(Debug, Clone)]
@@ -91,6 +92,11 @@ impl Showcase {
             severity,
         };
 
+        let hint = |line, index, label: &'static str| inlay::Hint {
+            position: Position { line, index },
+            label: label.into(),
+        };
+
         Self {
             content: Content::with_text(SOURCE),
             theme: Theme::SolarizedLight,
@@ -105,6 +111,17 @@ impl Showcase {
                 at(13, 0..0, diagnostic::Severity::Information),
                 at(34, 21..21, diagnostic::Severity::Hint),
                 at(37, 20..26, diagnostic::Severity::Error),
+            ],
+            // What a language server sends back, and the shapes a hint has to survive:
+            // one inside a line, where it paints over the code and is expected to; one
+            // past the end of a short line, in the empty space; one deep inside the long
+            // line, so it rides a continuation row once word wrap is on; and one in a
+            // script the font has to fall back for.
+            hints: vec![
+                hint(12, 16, ": usize"),
+                hint(29, 29, " → bool"),
+                hint(22, 128, ": &str"),
+                hint(37, 19, "なまえ: "),
             ],
         }
     }
@@ -150,6 +167,7 @@ impl Showcase {
                 .placeholder("Type something here...")
                 .on_action(Message::Edit)
                 .diagnostics(&self.diagnostics)
+                .inlay_hints(&self.hints)
                 .gutter(gutter::Style {
                     // The editor's own text color, dimmed, so the eye reads the code first
                     // and the numbers still follow the theme.
