@@ -36,6 +36,22 @@ pub fn inlay_style(mut self, style: inlay::Style) -> Self
 
 Borrowed, like diagnostics — application state, replaced on every LSP round-trip.
 
+**The plain-value signature above cannot express the defaults this doc also specifies**, so the
+field is `Option<inlay::Style>` and the default is built in `draw`. `inlay::Style` is a `Copy`
+struct fixed in Phase 3 whose `offset` is in logical pixels; it knows neither the theme nor the
+resolved text size, but the stated defaults (`offset: Vector::new(2.0, -size * 0.25)`, colour from
+the theme) depend on both, and both are first available in `draw`. An `impl Default` therefore
+cannot produce them, and hard-coding a grey would drop the one property a hint most needs — reading
+correctly against every theme. `inlay::Style::new(color, text_size)` keeps the builder signature and
+both default *values*:
+
+```rust
+let inlay_style = self.inlay_style
+    .unwrap_or_else(|| inlay::Style::new(style.placeholder, text_size));
+```
+
+`placeholder` is the dimmed-text colour the widget already has in hand from `text_editor::Style`.
+
 ## Step 2 — Draw
 
 In `draw`, after `editor.highlight(..)` and `State::draw(..)`:
@@ -76,6 +92,11 @@ easy to get wrong:
   mangles them.
 - **`wrapping: Wrapping::None`** and **`ellipsis: Ellipsis::None`** — a hint is one line, never
   reflowed or truncated.
+- **`line_height` resolves against the code's text size, not the label's:**
+  `self.line_height.to_absolute(text_size)`. The sketch above writes
+  `LineHeight::Absolute(line_height)` without saying where `line_height` comes from, which invites
+  resolving a *relative* line height against the smaller label size — that shrinks the label's box
+  and lifts it off the row it annotates.
 - **`hint_factor: renderer.hint_factor()`** — the **renderer's**, matching the placeholder at
   `widget/src/text_editor.rs:549`. Note this differs from the geometry path, which divides by the
   **editor's** `hint_factor`. They are different values (MAP_PLAN, "Two hint factors").
@@ -90,10 +111,20 @@ weak text.
 ## Step 3 — Known limitation: wrap-boundary anchors
 
 `Buffer::cursor_position` delegates to `cursor_glyph`, which **ignores affinity entirely**
-(`buffer.rs:149-181`). At a soft-wrap boundary, byte index *i* is simultaneously `glyph.end` of the
-last glyph on visual row N and `glyph.start` of the first glyph on row N+1; `find_map` takes the
-first hit. So **a hint anchored exactly at a wrap boundary renders at the far right edge of the
-previous row**, not at the start of the next.
+(`buffer.rs:149-181`). It makes two passes: the first matches `index == glyph.start`, the second
+`index == glyph.end`. A byte is therefore ambiguous only when it is `glyph.end` in one visual row
+*and* `glyph.start` in another — and `find_map` takes the earlier row. So **a hint anchored at such
+a boundary renders at the far right edge of the previous row**, not at the start of the next.
+
+**The trigger is glyph-level wrapping, not word wrapping — and an earlier version of this doc had
+that backwards.** Under `Wrapping::Word` the break falls on a space, and the space's glyph is
+dropped from *both* rows: the last glyph of row N ends at one byte and the first glyph of row N+1
+starts at the next, so they are two different bytes and neither is ambiguous. The collision needs a
+break *inside* an unbroken run of glyphs, i.e. `Wrapping::Glyph` over a long token.
+
+A test written from the old claim would use `Wrapping::Word` and silently pass without ever
+exercising the ambiguity. The committed test uses `Wrapping::Glyph` and asserts the shared byte
+belongs to both rows *before* relying on it, so it cannot go vacuous.
 
 Accept this for v1 and **write a test that asserts the current behaviour**, so the day someone
 decides to fix it they find a failing test rather than a silent change. The fix, if ever needed, is
