@@ -4,3 +4,7 @@
 //! [iced]: https://github.com/iced-rs/iced
 
 #![warn(missing_docs)]
+
+pub mod code_editor;
+
+pub use code_editor::Content;
