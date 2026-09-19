@@ -75,9 +75,14 @@ fn draw_squiggle<R: renderer::Renderer>(
 )
 ```
 
-Emit a triangle wave of short quads between `baseline + offset` and
-`baseline + offset + amplitude`, stepping `wavelength / 2` horizontally, each intersected against
-`clip_bounds` and skipped when the intersection is empty.
+Emit a triangle wave of short quads hanging one stroke below the baseline (`offset` is
+`thickness`), each intersected against `clip_bounds` and skipped when the intersection is empty.
+
+**Do not step by `wavelength / 2`.** Quads are axis-aligned, so one quad per half-period cannot
+draw a diagonal — it draws a *square* wave. A triangle wave has to be rasterized at the resolution
+of its own stroke: step by `thickness`, and give each quad the full vertical extent of the stroke
+over its slice so consecutive quads meet and the wave is unbroken. That is roughly **621 quads per
+80-column line**, about twice what an earlier estimate here suggested.
 
 Three details that decide whether it looks right:
 
@@ -85,15 +90,25 @@ Three details that decide whether it looks right:
   default features (`Cargo.toml:25`). Snapping every segment to the pixel grid flattens the wave
   into a dashed line. `widget/src/float.rs:318` is the in-tree precedent for setting it explicitly.
 - **Round thickness up to whole pixels:** `thickness.max(1.0).ceil()`. The cosmic-text fork does
-  exactly this (`render.rs:64-72`, commit `6ef1ccbe "improv text decoration visuals"`) because thin
-  sub-pixel strokes gamma-blend into mud.
+  exactly this (`render.rs:64-72`, commit `6ef1ccbe`) because thin sub-pixel strokes gamma-blend
+  into mud — but here it is also about **liveness**, not just looks. The stroke width doubles as
+  the horizontal step, so an unguarded `thickness: 0.0` makes the loop never advance: an infinite
+  loop inside `draw`. Guard the period the same way, `(wavelength / 2.0).max(thickness)`, or a
+  zero wavelength divides by zero.
 - **Anchor to the baseline, not the line box.** `Fragment::baseline` carries `run.line_y`. Placing
   the wave at `fragment.bounds.y + fragment.bounds.height` drifts away from the glyphs as line
   height grows.
-- **Clamp segment widths at zero.** cosmic-text's reference renderer wraps its span widths in
-  `cmp::max(0, max - min)` (`edit/editor.rs:135`) to defend against float→int truncation yielding a
-  negative width. Any arithmetic that derives a segment width from two clipped edges needs the same
-  guard, or a degenerate fragment produces a wrapped-around quad.
+- **Do not import the reference renderer's `cmp::max(0, max - min)` clamp.** It exists because
+  that code truncates to `i32` and passes a `u32`; this code never leaves float space.
+  `Rectangle::intersection` already returns `None` unless both extents are positive
+  (`core/src/rectangle.rs:195-215`), and stepping with `next = (x + thickness).min(right)` under
+  `x < right` keeps `next - x` strictly positive. A `.max(0.0)` here would be unfalsifiable — no
+  test can make it fire.
+- **The real float hazard runs the other way: `Rectangle::intersection` does not reject NaN.**
+  It is built on `f32::max`/`f32::min`, which *ignore* NaN and return the other operand — so a NaN
+  quad is not dropped, it is clamped to the entire clip rect and painted as a solid band across the
+  whole editor. `wavelength` and `thickness` are public fields, so guard them at the top of the
+  function rather than trusting the clip to catch it.
 
 ## Step 4 — Mind the quad budget
 
@@ -103,9 +118,10 @@ segment. Twenty diagnostics on screen is ~6400 quads per frame. cosmic-edit's en
 is a reaction to quad volume (commit `966cc0f` "Draw most items with GPU, except for line
 numbers").
 
-Ship the straightforward version, then **count**: log `fragments.len()` and total segments for a
-realistic file with ~20 diagnostics. Budget ≈2000 segments/frame. If it is exceeded, in order of
-preference:
+**Measured, so this is settled: ship the straightforward version.** 20 token-wide diagnostics is
+932 quads and costs +0.66 ms/frame (+4%) on the software renderer; 20 full 80-column diagnostics is
+12,420 quads, free on wgpu and +18 ms on tiny-skia. Nothing below is warranted unless a profile
+says otherwise — they are recorded as contingencies, not plans:
 
 1. Coarsen `wavelength` to 4-6px — fewer segments, and closer to how VS Code actually looks.
 2. Merge horizontally adjacent segments at the same y into single wider quads.

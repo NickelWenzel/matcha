@@ -20,9 +20,9 @@ So matcha owns a `graphics::text::Editor` directly and reads geometry from
 
 | | |
 | --- | --- |
-| Rust source | `Cargo.toml` + 10 files + 1 example — Phases 1-4 done |
-| Tests | 38 unit + 1 doctest passing; clippy `-D warnings` clean; suite pinned to tiny-skia |
-| Branch | `code-editor-widget`, 17 commits, working tree clean, **not pushed** |
+| Rust source | `Cargo.toml` + 10 files + 1 example — Phases 1-5 done |
+| Tests | 51 unit + 1 doctest passing; clippy `-D warnings` clean; suite pinned to tiny-skia |
+| Branch | `code-editor-widget`, 20 commits, working tree clean, **not pushed** |
 | Planning | complete — plan critiqued, one blocker found and fixed, FOSS-compared against cosmic-edit |
 
 Phase 1 built in 1m32s including the cold fetch of the three git forks. `cargo tree --depth 1`
@@ -45,31 +45,33 @@ a self-contained doc a subagent can execute without reading the others.
 | 2 — `CodeEditor` at parity with `TextEditor` | [MAP_PHASE_2.md](MAP_PHASE_2.md) | **done** 2026-09-19 |
 | 3 — `geometry.rs` + decoration types | [MAP_PHASE_3.md](MAP_PHASE_3.md) | **done** 2026-09-19 |
 | 4 — Line-number gutter | [MAP_PHASE_4.md](MAP_PHASE_4.md) | **done** 2026-09-19 |
-| 5 — Diagnostic squiggles | [MAP_PHASE_5.md](MAP_PHASE_5.md) | pending |
+| 5 — Diagnostic squiggles | [MAP_PHASE_5.md](MAP_PHASE_5.md) | **done** 2026-09-19 |
 | 6 — Inlay hint overlays | [MAP_PHASE_6.md](MAP_PHASE_6.md) | pending |
 | 7 — Examples, tests, docs | [MAP_PHASE_7.md](MAP_PHASE_7.md) | pending |
 
 Order: `1 → 2 → 3 → 4 → {5, 6} → 7`. Phases 5 and 6 are independent and may run in parallel.
 
-## What to build next: Phases 5 and 6
+## What to build next: Phase 6
 
-These are **independent of each other** and may run in parallel — the first point in the plan
-where that is true.
+Inlay hints — the last feature phase. `geometry::position_anchor` is shipped and tested, including
+the wrap-boundary behaviour, so this is anchoring plus a `fill_text` call.
 
-**Phase 5, diagnostic squiggles.** `geometry::range_fragments` already returns
-`Fragment { bounds, baseline }` including the minimum-width fallback, so this is drawing plus
-wiring. Three things the phase doc covers: `snap: false` is required or pixel-snapping flattens the
-wave into a dashed line; thickness rounds up with `.max(1.0).ceil()` or thin strokes gamma-blend
-into mud; and the quad budget is real — a 2px period across an 80-column line is ~320 quads per
-diagnostic, so measure before shipping.
+The hard boundary is that hints are **overlays, never virtual text**: they must not alter wrapping,
+layout, cursor positions, or hit-testing. Overlap with source text is the accepted v1 policy. The
+headline test is the passivity invariant — same input sequence with and without `.inlay_hints(..)`
+yielding byte-identical `content.text()`, `content.cursor()`, `Node::bounds()`, and click→caret.
 
-**Phase 6, inlay hints.** `geometry::position_anchor` is tested, including the wrap-boundary
-behaviour. The hard boundary is that hints are overlays, never virtual text: they must not alter
-wrapping, layout, cursor positions, or hit-testing. The headline test is the passivity invariant.
-Note Phase 4 found that `fill_text`'s cached path drops `hint_factor` entirely — pass it anyway,
-but do not expect it to do anything today.
+Two things Phase 5 leaves for it:
 
-Both phases draw **after** `editor.highlight(..)` and after `State::draw`, never from `layout`.
+- **Reuse the `Probe` renderer.** Phase 5 added a test-only recording renderer implementing
+  `renderer::Renderer` + `text::Renderer<Editor = graphics::text::Editor>`, driven straight through
+  `Widget::layout`/`Widget::draw`. It exists because `iced_test::Snapshot` has no pixel accessor —
+  `matches_image`/`matches_hash` are the only readers and they *write* goldens on first run. It is
+  how you assert what was drawn; extend it to record text if hints need that.
+- **`fill_text`'s cached path drops `hint_factor`** — it is not in `cache::Key`. Pass
+  `renderer.hint_factor()` anyway, but do not expect it to do anything today.
+
+After this, Phase 7 is examples, docs, README, and the `#[ignore]`d pixel snapshots.
 
 ## Known risks and debt
 

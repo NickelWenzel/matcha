@@ -521,7 +521,14 @@ does not expose. Four findings changed this plan; the rest are recorded as forwa
    with GPU, except for line numbers"). Phase 5 now carries an explicit budget and fallbacks.
 4. **Round underline thickness up to whole pixels.** The fork's `render.rs:64-72` does
    `(thickness * font_size).max(1.0).ceil()` — added by `6ef1ccbe "improv text decoration visuals"`
-   because thin sub-pixel strokes gamma-blend into mud.
+   because thin sub-pixel strokes gamma-blend into mud. Phase 5 found it also prevents an infinite
+   loop, since the stroke width doubles as the horizontal step.
+
+   Its sibling guard, `cmp::max(0, max - min)` (`edit/editor.rs:135`), was **not** adopted: it
+   exists because that renderer truncates to `i32`, and matcha never leaves float space, where
+   `Rectangle::intersection` already rejects non-positive extents. The hazard that *does* survive
+   in float space is NaN — `intersection` is built on `f32::max`/`f32::min`, which ignore it — so a
+   NaN quad is clamped to the whole clip rect rather than dropped.
 
 **Independent confirmation:** cosmic-edit's first-visual-row test (`text_box.rs:552-559`) dedupes
 against the previously *yielded* run, which is precisely the M4 bug this plan already fixed — when
