@@ -409,12 +409,33 @@ consumed; bind it with `let _ =` when the hit target is not needed.
 
 ## Risks
 
-**A. cosmic-text fork drift (highest).** The geometry API was verified against the crates.io
-0.19.0 copy; iced compiles the **`hecrj` fork** at rev `1cdc3e0f`, not checked out locally. Phase 3
-must begin with `cargo fetch` and a read of the fork's `src/buffer.rs` to confirm
-`LayoutRun::highlight`, `LayoutRun::cursor_position`, and `Buffer::cursor_position`. *Fallback:*
-port iced's `highlight_line` ([graphics/src/text/editor.rs:969-1014](/home/nickel/Programming/repos/iced/graphics/src/text/editor.rs#L969-L1014))
-and `visual_lines_offset` (`:1016-1029`) — a ~60-line port, accepting the BiDi weakness.
+**A. cosmic-text fork drift — RETIRED 2026-09-19.** The `hecrj` fork was shallow-cloned at rev
+`1cdc3e0f` and read directly. `LayoutRun`, `LayoutRunIter` (struct, `new`, `from_lines`, `next`),
+`highlight`, `cursor_glyph`, both `cursor_position`s, `Scroll`, `Buffer::scroll`,
+`Buffer::layout_runs`, and the whole of `edit/editor.rs` are **byte-identical** to the crates.io
+0.19.0 copy the design was verified against. **No fallback port is needed**; the Phase 3 design
+transfers unchanged.
+
+Three details the fork read confirmed or sharpened:
+
+- **The missing line-bounds check is worse than "absent".** When `line_i` falls outside
+  `[start.line, end.line]`, *both* `!=` guards in the predicate short-circuit to `true`, so every
+  grapheme reports selected — and this fires for lines **above** `start.line` as well as below
+  `end.line`. The `.filter(|run| run.line_i >= start.line && run.line_i <= end.line)` covers both
+  directions, which is why it is written as a range test rather than a single comparison.
+- **`line_top` is measured from the top of `scroll.line`, not from buffer line 0.** The iterator
+  starts its accumulator at `0.0` at the scroll line. Geometry is therefore viewport-relative in
+  exactly the way `Editor::selection()` is.
+- **One fork-only difference exists, and it does not matter here:** `LayoutRunIter::next` computes
+  row height via a new `LayoutLine::line_height(base)` helper rather than
+  `line_height_opt.unwrap_or(base)`. It changes only the numeric value for buffers using per-span
+  line heights via `Attrs`. Since matcha treats `run.line_height` as opaque, there is no impact.
+
+The one *unrelated* fork change worth knowing: `Buffer::hit` was fixed (PR #528) so the
+first-glyph test is `x < glyph.x` rather than `x < 0.0`, which only matters for non-left-aligned
+text. matcha delegates all hit-testing to `editor::State` and scopes v1 to
+`text::Alignment::Default`, so it is unaffected — but it is independent evidence that alignment
+makes hit-testing subtle, which is why that scope limit stays.
 
 **B. `layout_runs()` stops at the first unshaped line.** `LayoutRunIter::next` does
 `line.shape_opt()?` / `line.layout_opt()?`, and `?` on `None` ends the whole iteration.

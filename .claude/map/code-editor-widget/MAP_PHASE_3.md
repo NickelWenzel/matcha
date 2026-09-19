@@ -13,28 +13,33 @@ testable without a renderer or a window. Nothing in this phase touches the widge
 **Exit criteria:** `cargo clippy --all-targets -- -D warnings` clean and the full geometry test
 suite below passes.
 
-## Step 0 — Verify the fork API (do this first)
+## Step 0 — Fork API verification (already done — read, don't repeat)
 
-The geometry design rests on three cosmic-text methods verified against the **crates.io** 0.19.0
-copy. iced compiles the **`hecrj` fork** (rev `1cdc3e0f`), which is not checked out locally.
+**Completed 2026-09-19.** The `hecrj` fork was cloned at rev `1cdc3e0f` and read directly. Every
+API this phase depends on is **byte-identical** to the crates.io 0.19.0 copy the design was
+verified against. No fallback port is needed; implement the design as written.
 
-```bash
-cargo fetch
-find ~/.cargo/git/checkouts -maxdepth 1 -iname 'cosmic-text*'
-```
+Confirmed present with these exact signatures:
 
-Then confirm in the fork's `src/buffer.rs`:
-
-- `Buffer::layout_runs(&self) -> LayoutRunIter<'_>` — note `&self`, not `&mut self`
+- `Buffer::layout_runs(&self) -> LayoutRunIter<'_>` — `&self`, so it works through `editor.buffer()`
 - `LayoutRun::highlight(&self, cursor_start: Cursor, cursor_end: Cursor) -> impl Iterator<Item = (f32, f32)>`
+  — returns an **owned** `std::vec::IntoIter`, so nothing borrows `run` and the `.collect::<Vec<_>>()`
+  in the snippet below is belt-and-braces rather than required
 - `LayoutRun::cursor_position(&self, cursor: &Cursor) -> Option<f32>`
-- `Buffer::cursor_position(&self, cursor: &Cursor) -> Option<(f32, f32)>`
-- `LayoutRun` fields: `line_i`, `glyphs`, `line_top`, `line_y`, `line_height`, `line_w`, `rtl`
+- `Buffer::cursor_position(&self, cursor: &Cursor) -> Option<(f32, f32)>` — returns `(x, line_top)`
+- `LayoutRun` fields: `line_i`, `text`, `rtl`, `glyphs`, `decorations`, `line_y`, `line_top`,
+  `line_height`, `line_w`. **No `layout_i`** — the visual-row index is a private iterator cursor,
+  which is why the first-row test must be structural.
+- `Scroll { line, vertical, horizontal }`; `Buffer::scroll()` returns **by value** (`const fn`)
 
-**If `highlight` or `cursor_position` are absent**, fall back to porting iced's own private
-helpers — `highlight_line` (`graphics/src/text/editor.rs:969-1014`) and `visual_lines_offset`
-(`:1016-1029`). They are ~60 lines together, and they assume contiguous LTR glyphs, so the BiDi
-cases in the test matrix below become known-failing. Report the fallback if you take it.
+Two clarifications from the fork read that affect the code below:
+
+- **`line_top` is measured from the top of `scroll.line`, not from buffer line 0.** The iterator
+  starts its accumulator at `0.0` on the scroll line, so output is viewport-relative — the same
+  space `Editor::selection()` reports in.
+- **The missing line-bounds check fires in both directions.** Outside `[start.line, end.line]`,
+  *both* `!=` guards short-circuit to `true`, so lines **above** `start.line` are affected as well
+  as those below `end.line`. The filter is a range test for that reason.
 
 ## Step 1 — Decoration types
 

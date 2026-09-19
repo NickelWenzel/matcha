@@ -90,6 +90,10 @@ Three details that decide whether it looks right:
 - **Anchor to the baseline, not the line box.** `Fragment::baseline` carries `run.line_y`. Placing
   the wave at `fragment.bounds.y + fragment.bounds.height` drifts away from the glyphs as line
   height grows.
+- **Clamp segment widths at zero.** cosmic-text's reference renderer wraps its span widths in
+  `cmp::max(0, max - min)` (`edit/editor.rs:135`) to defend against float→int truncation yielding a
+  negative width. Any arithmetic that derives a segment width from two clipped edges needs the same
+  guard, or a degenerate fragment produces a wrapped-around quad.
 
 ## Step 4 — Mind the quad budget
 
