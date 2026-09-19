@@ -23,8 +23,8 @@ Confirmed present with these exact signatures:
 
 - `Buffer::layout_runs(&self) -> LayoutRunIter<'_>` — `&self`, so it works through `editor.buffer()`
 - `LayoutRun::highlight(&self, cursor_start: Cursor, cursor_end: Cursor) -> impl Iterator<Item = (f32, f32)>`
-  — returns an **owned** `std::vec::IntoIter`, so nothing borrows `run` and the `.collect::<Vec<_>>()`
-  in the snippet below is belt-and-braces rather than required
+  — returns an **owned** `std::vec::IntoIter`, so nothing borrows `run`. Collecting the spans up
+  front is what detaches the closure from `run`; no second `.collect::<Vec<_>>()` is needed
 - `LayoutRun::cursor_position(&self, cursor: &Cursor) -> Option<f32>`
 - `Buffer::cursor_position(&self, cursor: &Cursor) -> Option<(f32, f32)>` — returns `(x, line_top)`
 - `LayoutRun` fields: `line_i`, `text`, `rtl`, `glyphs`, `decorations`, `line_y`, `line_top`,
@@ -159,23 +159,28 @@ pub fn range_fragments(
         // REQUIRED: highlight() has no line-bounds check of its own.
         .filter(|run| run.line_i >= start.line && run.line_i <= end.line)
         .flat_map(|run| {
+            let mut spans: Vec<(f32, f32)> = run.highlight(start, end).collect();
+
+            if spans.is_empty() {
+                // See "the empty-line / zero-width fallback" below — this is required.
+                let anchor = if run.glyphs.is_empty() {
+                    Some(0.0)
+                } else {
+                    run.cursor_position(&start)
+                };
+
+                spans.extend(anchor.map(|x| (x, MIN_FRAGMENT_WIDTH * hint_factor)));
+            }
+
             let (top, height, baseline) = (run.line_top, run.line_height, run.line_y);
 
-            run.highlight(start, end)
-                .map(move |(x, width)| Fragment {
-                    bounds: Rectangle {
-                        x: x - scroll.horizontal,
-                        y: top,
-                        width,
-                        height,
-                    },
-                    baseline,
-                })
-                .collect::<Vec<_>>()
-        })
-        .map(|fragment| Fragment {
-            bounds: fragment.bounds * inverse,
-            baseline: fragment.baseline * inverse,
+            spans.into_iter().map(move |(x, width)| Fragment {
+                // Vertical scroll is already applied by the iterator; the renderer applies
+                // horizontal scroll only at draw time, so overlays subtract it themselves.
+                // It is a buffer-space distance, so it goes before the hint scaling.
+                bounds: Rectangle { x: x - scroll.horizontal, y: top, width, height } * inverse,
+                baseline: baseline * inverse,
+            })
         })
         .collect()
 }
@@ -240,12 +245,36 @@ spans with `width <= 0.0`. Two consequences that would otherwise ship as silent 
   "missing semicolon" diagnostic looks like — is filtered out, therefore **nothing drawn**.
 
 cosmic-text's own renderer special-cases the first at `edit/editor.rs:106-115`. matcha must handle
-both. After collecting spans for a run, if the run is inside the range and produced no fragment,
-emit one of a minimum width anchored at the run's start x:
+both. After collecting spans for a run that is inside the range, if it produced no fragment, emit
+one of a minimum width:
 
 ```rust
 const MIN_FRAGMENT_WIDTH: f32 = 4.0;   // logical px — enough for one squiggle period
+
+let anchor = if run.glyphs.is_empty() {
+    // A blank line has no glyph to anchor to, and its own cursor answers
+    // for no other line, so it can only be marked at its left edge.
+    Some(0.0)
+} else {
+    // Anchor at the column the range starts at, so a zero-width range
+    // points at its own token. `None` means the range starts on another
+    // line or another visual row of this one — nothing to mark here.
+    run.cursor_position(&start)
+};
+
+// MIN_FRAGMENT_WIDTH is logical while spans are buffer-space, so scale it
+// up before the shared `1.0 / hint_factor` pass converts everything back.
+spans.extend(anchor.map(|x| (x, MIN_FRAGMENT_WIDTH * hint_factor)));
 ```
+
+**The `glyphs.is_empty()` test is the discriminator, and `unwrap_or(0.0)` is wrong.**
+`LayoutRun::cursor_position` early-returns `None` whenever `cursor.line != self.line_i`, so
+defaulting to `0.0` paints a spurious marker at the left edge of every row where the range merely
+*isn't* — including every visual row above a range that starts on the second row of a wrapped
+line, and any byte index past the end of its line. `None` must suppress the fragment, not fall back.
+
+Anchoring at the run's left edge unconditionally is equally wrong: it is right only for blank
+lines, and would draw a mid-line zero-width range at column 0, pointing at the wrong token.
 
 Do this per *run*, not per range, so a multi-line range with a blank line in the middle still marks
 the blank line. Do **not** extend it to the full line width the way the reference renderer does for
@@ -270,7 +299,7 @@ fn shaped(text: &str, width: f32) -> graphics::text::Editor {
 
     editor.update(
         Size::new(width, 400.0),
-        Font::MONOSPACE,
+        Font::DEFAULT,   // NOT Font::MONOSPACE — see below
         Pixels(14.0),
         LineHeight::Absolute(Pixels(20.0)),
         Wrapping::Word,
@@ -283,7 +312,10 @@ fn shaped(text: &str, width: f32) -> graphics::text::Editor {
 }
 ```
 
-Determinism depends on the `fira-sans` dev-feature added in Phase 1. Assert on *relationships*
+Determinism depends on the `fira-sans` dev-feature added in Phase 1 **and on `Font::DEFAULT`**.
+`FontSystem::new_with_fonts` also calls `db.load_system_fonts()`, and `fira-sans` only sets the
+*sans-serif* family — so `Font::MONOSPACE` resolves through whatever the host happens to have
+installed and shaping stops being reproducible. `Font::DEFAULT` is the bundled Fira Sans. Assert on *relationships*
 (ordering, counts, containment, equality between two computed values) rather than hard-coded pixel
 values wherever possible — exact advances are font-version-dependent.
 
@@ -295,8 +327,8 @@ values wherever possible — exact advances are font-version-dependent.
 | Range spanning 3 lines | Fragments on exactly those 3 lines |
 | Reversed range (`end < start`) | Same result as the forward range (normalization) |
 | Wrapped line, range crossing the wrap | ≥2 fragments, distinct `y` values |
-| Diagnostic on a **blank line** | Exactly 1 fragment, `width == MIN_FRAGMENT_WIDTH` — not empty |
-| **Zero-width range** (`start == end`) | Exactly 1 fragment of minimum width — not empty |
+| Diagnostic on a **blank line** | Exactly 1 fragment, `width == MIN_FRAGMENT_WIDTH`, `x == 0.0` |
+| **Zero-width range mid-line** (`start == end`) | 1 minimum-width fragment at the *column it points at*, not at `x == 0.0` |
 | Blank line in the middle of a multi-line range | Gets its own minimum-width fragment |
 | Multibyte (`héllo`, CJK, emoji/ZWJ) | Fragment widths are positive; no panic; byte indices at cluster boundaries |
 | Range at line start / line end | Non-empty fragment; width > 0 |

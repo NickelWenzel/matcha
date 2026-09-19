@@ -302,8 +302,8 @@ Four non-obvious constraints baked into the above, each verified:
 
 A wrapped multi-line range naturally produces one rectangle per visible wrapped fragment, because
 `layout_runs()` iterates visual rows and `highlight` clips per row. An *internal empty line* inside
-a multi-line range yields nothing (no glyphs) — cosmic-text special-cases this at
-`edit/editor.rs:106-115`; for squiggles, drawing nothing is correct.
+a multi-line range yields no spans of its own (no glyphs), so the minimum-width fallback above is
+what marks it — cosmic-text special-cases the same case at `edit/editor.rs:106-115`.
 
 ---
 
