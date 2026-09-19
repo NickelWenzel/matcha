@@ -1,9 +1,12 @@
 //! Edits a buffer that stresses wrapping, multibyte shaping, and scrolling.
 
+use std::ops::Range;
+
 use iced::widget::{column, pick_list, row, space, text, toggler};
 use iced::{Center, Element, Fill, Font, Theme};
 
-use matcha::{Action, Content, code_editor, gutter};
+use matcha::decoration::{TextRange, diagnostic};
+use matcha::{Action, Content, Position, code_editor, gutter};
 
 pub fn main() -> iced::Result {
     iced::application(Showcase::new, Showcase::update, Showcase::view)
@@ -62,6 +65,7 @@ struct Showcase {
     content: Content,
     theme: Theme,
     word_wrap: bool,
+    diagnostics: Vec<diagnostic::Diagnostic>,
 }
 
 #[derive(Debug, Clone)]
@@ -73,10 +77,35 @@ enum Message {
 
 impl Showcase {
     fn new() -> Self {
+        let at = |line, bytes: Range<usize>, severity| diagnostic::Diagnostic {
+            range: TextRange::new(
+                Position {
+                    line,
+                    index: bytes.start,
+                },
+                Position {
+                    line,
+                    index: bytes.end,
+                },
+            ),
+            severity,
+        };
+
         Self {
             content: Content::with_text(SOURCE),
             theme: Theme::SolarizedLight,
             word_wrap: true,
+            // The shapes a squiggle has to take: a token mid-line, a range long enough to
+            // cross a wrap, a blank line, an "insert here" of no width at all, and a
+            // multibyte cluster. The positions are byte offsets into `SOURCE`, so editing
+            // the text above moves them.
+            diagnostics: vec![
+                at(7, 4..9, diagnostic::Severity::Error),
+                at(21, 12..159, diagnostic::Severity::Warning),
+                at(13, 0..0, diagnostic::Severity::Information),
+                at(34, 21..21, diagnostic::Severity::Hint),
+                at(37, 20..26, diagnostic::Severity::Error),
+            ],
         }
     }
 
@@ -120,6 +149,7 @@ impl Showcase {
                 .height(Fill)
                 .placeholder("Type something here...")
                 .on_action(Message::Edit)
+                .diagnostics(&self.diagnostics)
                 .gutter(gutter::Style {
                     // The editor's own text color, dimmed, so the eye reads the code first
                     // and the numbers still follow the theme.
