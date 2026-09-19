@@ -162,7 +162,7 @@ key map via `Binding::from_key_press`. Driving it is one call.
 
 **Reuse iced's theming.** `Theme: text_editor::Catalog`, reusing `text_editor::{Status, Style}` so
 a `CodeEditor` looks identical to a `TextEditor` out of the box. Decoration styling stays off the
-theme system as builder methods (`.diagnostic_style(..)`, `.inlay_style(..)`, `.gutter_style(..)`).
+theme system as builder methods (`.diagnostic_style(..)`, `.inlay_style(..)`, `.gutter(..)`).
 
 **The gutter is modelled as extra left padding.** This is the trick that makes the gutter nearly
 free. Every use of `padding` in `State::update` is `cursor_pos - Vector::new(padding.left,

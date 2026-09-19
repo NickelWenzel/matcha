@@ -80,6 +80,8 @@ fn squiggles_render_under_the_right_glyphs() -> Result<(), Error> {
 ```
 
 `#[ignore]` matches iced's own convention for snapshots (`examples/todos/src/main.rs:626`).
+Baselines land as `*-tiny-skia.sha256` because `.cargo/config.toml` pins the test renderer and
+`Snapshot::path` suffixes the renderer name — the same files iced itself commits.
 **Warning:** `matches_hash` auto-creates the golden file on first run and returns `true`
 (`test/src/simulator.rs:319-325`) — so a run on a machine where rendering is wrong silently bakes
 in a wrong baseline. Generate goldens deliberately, once, and review the committed files.

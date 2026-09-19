@@ -35,6 +35,10 @@ upstream:
     A crates.io cosmic-text is a different crate instance and its types will not
     unify with iced's.
 
+# The test renderer is pinned to tiny-skia in .cargo/config.toml. With wgpu,
+# each Simulator builds its own renderer and concurrent vkCreateInstance calls
+# segfault the host Vulkan loader (measured 3 failures in 6 runs). tiny-skia is
+# also ~2.4x faster and is what iced uses for its own in-tree snapshots.
 checklist:
   # Before Phase 1 there is no Cargo.toml and every cargo command fails.
   # That is the expected bare-repo state, not a regression.
@@ -54,7 +58,8 @@ forbidden:
   - command: cargo test -- --ignored
     reason: >-
       pixel snapshots auto-create their golden file on first run and return true,
-      so a stray run silently bakes in a wrong baseline
+      so a stray run silently bakes in a wrong baseline. Baselines are suffixed
+      with the renderer name, so they are tiny-skia files given the pin above.
   - command: cargo update / editing the pinned iced rev
     reason: the pin is the contract; upgrades are a deliberate, reviewed step
 

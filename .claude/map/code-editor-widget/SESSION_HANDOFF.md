@@ -20,9 +20,9 @@ So matcha owns a `graphics::text::Editor` directly and reads geometry from
 
 | | |
 | --- | --- |
-| Rust source | `Cargo.toml` + 9 files + 1 example, ~1690 lines — Phases 1-3 done |
-| Tests | 32 unit + 1 doctest passing (22 in geometry); clippy `-D warnings` clean |
-| Branch | `code-editor-widget`, 13 commits, working tree clean, **not pushed** |
+| Rust source | `Cargo.toml` + 10 files + 1 example — Phases 1-4 done |
+| Tests | 38 unit + 1 doctest passing; clippy `-D warnings` clean; suite pinned to tiny-skia |
+| Branch | `code-editor-widget`, 17 commits, working tree clean, **not pushed** |
 | Planning | complete — plan critiqued, one blocker found and fixed, FOSS-compared against cosmic-edit |
 
 Phase 1 built in 1m32s including the cold fetch of the three git forks. `cargo tree --depth 1`
@@ -44,31 +44,32 @@ a self-contained doc a subagent can execute without reading the others.
 | 1 — Crate skeleton + `Content` | [MAP_PHASE_1.md](MAP_PHASE_1.md) | **done** 2026-09-19 |
 | 2 — `CodeEditor` at parity with `TextEditor` | [MAP_PHASE_2.md](MAP_PHASE_2.md) | **done** 2026-09-19 |
 | 3 — `geometry.rs` + decoration types | [MAP_PHASE_3.md](MAP_PHASE_3.md) | **done** 2026-09-19 |
-| 4 — Line-number gutter | [MAP_PHASE_4.md](MAP_PHASE_4.md) | pending |
+| 4 — Line-number gutter | [MAP_PHASE_4.md](MAP_PHASE_4.md) | **done** 2026-09-19 |
 | 5 — Diagnostic squiggles | [MAP_PHASE_5.md](MAP_PHASE_5.md) | pending |
 | 6 — Inlay hint overlays | [MAP_PHASE_6.md](MAP_PHASE_6.md) | pending |
 | 7 — Examples, tests, docs | [MAP_PHASE_7.md](MAP_PHASE_7.md) | pending |
 
 Order: `1 → 2 → 3 → 4 → {5, 6} → 7`. Phases 5 and 6 are independent and may run in parallel.
 
-## What to build next: Phase 4
+## What to build next: Phases 5 and 6
 
-The line-number gutter. `geometry::visible_line_rows` already exists and is tested, including the
-wrapped-line-straddling-the-viewport-top case, so this phase is wiring plus measurement.
+These are **independent of each other** and may run in parallel — the first point in the plan
+where that is true.
 
-The core idea is that the gutter is **extra left padding**: every use of `padding` in
-`editor::State::update` is `cursor_pos - Vector::new(padding.left, padding.top)`, so folding the
-gutter width into `padding.left` makes click-to-position and drag-select correct for free. That
-only holds if `text_padding` replaces `self.padding` at **all five** call sites the phase doc
-names — mixing them leaves the widget node narrower than its container and text escapes the clip.
+**Phase 5, diagnostic squiggles.** `geometry::range_fragments` already returns
+`Fragment { bounds, baseline }` including the minimum-width fallback, so this is drawing plus
+wiring. Three things the phase doc covers: `snap: false` is required or pixel-snapping flattens the
+wave into a dashed line; thickness rounds up with `.max(1.0).ceil()` or thin strokes gamma-blend
+into mud; and the quad budget is real — a 2px period across an 80-column line is ~320 quads per
+diagnostic, so measure before shipping.
 
-Two traps the phase doc covers: derive the width from `content.line_count()`, never from the
-visible rows (deriving it from what is on screen makes it change mid-scroll, which shifts the text
-origin and desyncs hit-testing — cosmic-edit shipped exactly that bug); and clamp gutter clicks,
-because `Action::Click` computes `(position.x + scroll.horizontal)` and a negative gutter x turns
-positive once you scroll right, jumping the caret to an arbitrary column.
+**Phase 6, inlay hints.** `geometry::position_anchor` is tested, including the wrap-boundary
+behaviour. The hard boundary is that hints are overlays, never virtual text: they must not alter
+wrapping, layout, cursor positions, or hit-testing. The headline test is the passivity invariant.
+Note Phase 4 found that `fill_text`'s cached path drops `hint_factor` entirely — pass it anyway,
+but do not expect it to do anything today.
 
-This is the first phase that touches `widget.rs` since Phase 2.
+Both phases draw **after** `editor.highlight(..)` and after `State::draw`, never from `layout`.
 
 ## Known risks and debt
 

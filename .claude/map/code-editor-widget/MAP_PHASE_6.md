@@ -79,6 +79,10 @@ easy to get wrong:
 - **`hint_factor: renderer.hint_factor()`** — the **renderer's**, matching the placeholder at
   `widget/src/text_editor.rs:549`. Note this differs from the geometry path, which divides by the
   **editor's** `hint_factor`. They are different values (MAP_PLAN, "Two hint factors").
+  Phase 4 found that `fill_text`'s *cached* path drops the field entirely — it is not part of
+  `cache::Key` (`wgpu/src/layer.rs:108-121`, and tiny-skia likewise) — so on that path the value
+  is inert. Pass it anyway for the same reason every hint-factor division is written out: it is
+  correct when hinting returns, and wrong-by-omission is harder to find later.
 
 Defaults: `size_scale: 0.75`, `offset: Vector::new(2.0, -size * 0.25)`, `color` from the theme's
 weak text.

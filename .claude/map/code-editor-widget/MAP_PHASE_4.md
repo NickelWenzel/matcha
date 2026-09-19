@@ -94,7 +94,8 @@ for (line, top) in geometry::visible_line_rows(buffer, hint_factor) {
             ellipsis: text::Ellipsis::None,
             hint_factor: renderer.hint_factor(),
         },
-        Point::new(bounds.x + self.padding.left + gutter_width, bounds.y + self.padding.top + top),
+        // `gutter_right - spacing`, NOT the text origin: see below.
+        Point::new(gutter_right - style.spacing, bounds.y + self.padding.top + top),
         style.color,
         viewport_intersection,
     );
@@ -111,6 +112,10 @@ Four things to get right:
   does `position.x -= min_bounds.width`, `wgpu/src/text.rs:562-565`). If per-row x jitter ever
   appears, the fallback is cosmic-edit's trick: left-align a space-padded string
   (`format!("{:width$}", n)`, `line_number.rs:31`) so every number occupies identical columns.
+- **Draw at `gutter_right - style.spacing`, not at the text origin.** Right-aligning *at* the text
+  origin makes the numbers butt straight against the source and puts the `spacing` gap on their
+  left — the opposite of what the field means. Since `gutter_width` already includes `spacing`,
+  the draw position has to subtract it back off.
 
 **Performance note.** `fill_text` re-shapes each number every frame. cosmic-edit avoids this by
 caching shaped numbers keyed on `(number, digit_width)` (`line_number.rs:28-52`). Ship the simple
