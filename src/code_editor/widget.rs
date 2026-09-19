@@ -17,8 +17,9 @@ use iced::advanced::widget::{self, Widget};
 use iced::alignment;
 use iced::widget::text_editor;
 use iced::window;
-use iced::{Element, Event, Font, Length, Padding, Pixels, Rectangle, Size, Vector};
+use iced::{Element, Event, Font, Length, Padding, Pixels, Point, Rectangle, Size, Vector};
 
+use crate::code_editor::decoration::diagnostic;
 use crate::code_editor::{Content, geometry, gutter};
 
 /// A multi-line code editor.
@@ -73,6 +74,8 @@ where
     padding: Padding,
     wrapping: text::Wrapping,
     gutter: Option<gutter::Style>,
+    diagnostics: &'a [diagnostic::Diagnostic],
+    diagnostic_style: Box<dyn Fn(diagnostic::Severity) -> diagnostic::Style + 'a>,
     class: Theme::Class<'a>,
     // A `type` alias would only move this signature somewhere the reader has to chase it; iced
     // turns the lint off for the whole workspace for the same reason.
@@ -127,6 +130,8 @@ where
             padding: Padding::new(5.0),
             wrapping: text::Wrapping::default(),
             gutter: None,
+            diagnostics: &[],
+            diagnostic_style: Box::new(diagnostic::Style::from),
             class: <Theme as text_editor::Catalog>::default(),
             key_binding: None,
             on_edit: None,
@@ -216,6 +221,32 @@ where
         self
     }
 
+    /// Underlines the given [`Diagnostic`](diagnostic::Diagnostic)s.
+    ///
+    /// The diagnostics are borrowed rather than owned or cached: they are
+    /// application state that is replaced wholesale on every round-trip with
+    /// whatever produces them, and the widget is rebuilt from that state every
+    /// frame anyway.
+    ///
+    /// They are read only while drawing. Nothing the editor decides — what it
+    /// shapes, where a click lands, where the caret is — depends on them.
+    pub fn diagnostics(mut self, diagnostics: &'a [diagnostic::Diagnostic]) -> Self {
+        self.diagnostics = diagnostics;
+        self
+    }
+
+    /// Sets how each [`Severity`](diagnostic::Severity) is drawn.
+    ///
+    /// Defaults to [`diagnostic::Style::from`], which gives each severity the
+    /// color editors have converged on.
+    pub fn diagnostic_style(
+        mut self,
+        style: impl Fn(diagnostic::Severity) -> diagnostic::Style + 'a,
+    ) -> Self {
+        self.diagnostic_style = Box::new(style);
+        self
+    }
+
     /// Highlights the [`CodeEditor`] with the given [`text::Parser`] and
     /// [`text::Highlighter`].
     pub fn highlight_with<P: text::Parser>(
@@ -235,6 +266,8 @@ where
             padding: self.padding,
             wrapping: self.wrapping,
             gutter: self.gutter,
+            diagnostics: self.diagnostics,
+            diagnostic_style: self.diagnostic_style,
             class: self.class,
             key_binding: self.key_binding,
             on_edit: self.on_edit,
@@ -613,14 +646,15 @@ where
             },
         );
 
+        // Everything below reads the shaped buffer, whose coordinate space is scaled by the
+        // *editor's* hint factor — not the renderer's, the one text is drawn with.
+        let hint_factor = content.hint_factor().unwrap_or(1.0);
+
         if let Some(gutter_style) = self.gutter {
             // The rows come out of the shaped buffer, which `highlight` above has just
             // brought up to date; `layout_runs` stops at the first unshaped line, so a
             // partly shaped buffer simply numbers fewer rows.
             let text = self.gutter_text(renderer);
-            // The buffer's coordinate space is scaled by the *editor's* factor, which is
-            // not the renderer's — the one the numbers themselves are drawn with.
-            let hint_factor = content.hint_factor().unwrap_or(1.0);
 
             gutter::draw(
                 gutter_style,
@@ -635,6 +669,38 @@ where
                 geometry::visible_line_rows(content.buffer(), hint_factor),
                 text,
             );
+        }
+
+        // The same clip the glyphs themselves are drawn under, so an underline is never
+        // visible where its text is not — and in particular never reaches the gutter.
+        let Some(clip_bounds) =
+            viewport.intersection(&Rectangle::new(text_bounds.position(), content.bounds()))
+        else {
+            return;
+        };
+
+        let translation = text_bounds.position() - Point::ORIGIN;
+
+        // Decorations are placed against the shaped buffer, so they can only be drawn after
+        // `highlight` above: `layout_runs` stops at the first unshaped line, and shaping the
+        // visible window is what `highlight` finishes. Call order does not decide z-order —
+        // both backends draw every quad in a layer before any of its text — so these waves
+        // land beneath the glyphs they mark however late they are issued, which is where an
+        // underline belongs.
+        for diagnostic in self.diagnostics {
+            let style = (self.diagnostic_style)(diagnostic.severity);
+
+            for fragment in
+                geometry::range_fragments(content.buffer(), hint_factor, diagnostic.range)
+            {
+                diagnostic::draw_squiggle(
+                    renderer,
+                    fragment.bounds + translation,
+                    fragment.baseline + translation.y,
+                    clip_bounds,
+                    style,
+                );
+            }
         }
     }
 
@@ -709,10 +775,15 @@ where
 mod tests {
     use super::*;
 
-    use iced::{Color, Point};
+    use std::collections::BTreeSet;
+    use std::ops::Range;
+
+    use iced::advanced::image;
+    use iced::{Background, Color, Point, Transformation};
     use iced_test::simulator;
 
-    use crate::{Action, Motion};
+    use crate::decoration::TextRange;
+    use crate::{Action, Motion, Position};
 
     #[derive(Debug, Clone)]
     enum Message {
@@ -723,6 +794,39 @@ mod tests {
         color: Color::BLACK,
         spacing: 8.0,
     };
+
+    /// The viewport the recorded draws below happen in.
+    ///
+    /// Tall enough that nothing a test writes is cut off the bottom, and narrow
+    /// enough that a long line overruns the right edge.
+    const SIZE: Size = Size::new(400.0, 600.0);
+
+    /// The default look of an error, which is what [`drawn`] paints unless a
+    /// test asks for something else.
+    fn squiggle() -> diagnostic::Style {
+        diagnostic::Style::from(diagnostic::Severity::Error)
+    }
+
+    /// A diagnostic over `bytes` of `line`.
+    fn mark(
+        line: usize,
+        bytes: Range<usize>,
+        severity: diagnostic::Severity,
+    ) -> diagnostic::Diagnostic {
+        diagnostic::Diagnostic {
+            range: TextRange::new(
+                Position {
+                    line,
+                    index: bytes.start,
+                },
+                Position {
+                    line,
+                    index: bytes.end,
+                },
+            ),
+            severity,
+        }
+    }
 
     /// Builds the widget the gutter tests drive.
     ///
@@ -1049,5 +1153,565 @@ mod tests {
             rows.map(|(line, _)| line).all(|line| line != 0),
             "the continuation row must not carry line 0's number"
         );
+    }
+
+    /// A renderer that records the quads it is asked to fill and draws nothing.
+    ///
+    /// Squiggles are quads, and a `Simulator` hands back no pixels a test can
+    /// read, so the draw calls themselves are the only place to look.
+    #[derive(Debug, Default)]
+    struct Probe {
+        quads: Vec<(renderer::Quad, Background)>,
+    }
+
+    impl Probe {
+        /// The quads filled in `color`.
+        ///
+        /// The widget's only other quads are its background and its caret,
+        /// neither of which is ever a diagnostic's color.
+        fn squiggles(&self, color: Color) -> Vec<renderer::Quad> {
+            self.quads
+                .iter()
+                .filter(|(_, background)| *background == Background::Color(color))
+                .map(|(quad, _)| *quad)
+                .collect()
+        }
+    }
+
+    impl renderer::Renderer for Probe {
+        fn start_layer(&mut self, _bounds: Rectangle) {}
+
+        fn end_layer(&mut self) {}
+
+        fn start_transformation(&mut self, _transformation: Transformation) {}
+
+        fn end_transformation(&mut self) {}
+
+        fn fill_quad(&mut self, quad: renderer::Quad, background: impl Into<Background>) {
+            self.quads.push((quad, background.into()));
+        }
+
+        fn allocate_image(
+            &self,
+            _handle: &image::Handle,
+            _callback: impl FnOnce(Result<image::Allocation, image::Error>) + Send + 'static,
+        ) {
+        }
+
+        fn hint(&mut self, _scale: renderer::Scale) {}
+
+        fn scale(&self) -> Option<renderer::Scale> {
+            None
+        }
+
+        fn reset(&mut self, _new_bounds: Rectangle) {}
+
+        fn settings(&self) -> renderer::Settings {
+            renderer::Settings::default()
+        }
+    }
+
+    impl text::Renderer for Probe {
+        // The editor is the whole point: the widget's bound pins it to the graphics one, and
+        // the buffer inside it is what the fragments are measured against.
+        type Paragraph = graphics::text::Paragraph;
+        type Editor = graphics::text::Editor;
+
+        const ICON_FONT: Font = Font::DEFAULT;
+        const CHECKMARK_ICON: char = '✓';
+        const ARROW_DOWN_ICON: char = '▼';
+        const SCROLL_UP_ICON: char = '^';
+        const SCROLL_DOWN_ICON: char = 'v';
+        const SCROLL_LEFT_ICON: char = '<';
+        const SCROLL_RIGHT_ICON: char = '>';
+        const ICED_LOGO: char = '*';
+
+        fn fill_paragraph(
+            &mut self,
+            _text: &Self::Paragraph,
+            _position: Point,
+            _color: Color,
+            _clip_bounds: Rectangle,
+        ) {
+        }
+
+        fn fill_editor(
+            &mut self,
+            _editor: &Self::Editor,
+            _position: Point,
+            _color: Color,
+            _clip_bounds: Rectangle,
+        ) {
+        }
+
+        fn fill_text(
+            &mut self,
+            _text: text::Text,
+            _position: Point,
+            _color: Color,
+            _clip_bounds: Rectangle,
+        ) {
+        }
+    }
+
+    /// Lays `editor` out in a [`SIZE`] viewport and draws it, returning
+    /// everything the draw recorded.
+    fn record(mut editor: CodeEditor<'_, parser::PlainText, Message, iced::Theme, Probe>) -> Probe {
+        let mut renderer = Probe::default();
+        let mut tree = widget::Tree::new(&editor as &dyn Widget<Message, iced::Theme, Probe>);
+
+        let node = editor.layout(&mut tree, &renderer, &layout::Limits::new(Size::ZERO, SIZE));
+
+        editor.draw(
+            &tree,
+            &mut renderer,
+            &iced::Theme::Light,
+            &renderer::Style::default(),
+            Layout::new(&node),
+            mouse::Cursor::Unavailable,
+            &Rectangle::with_size(SIZE),
+        );
+
+        renderer
+    }
+
+    /// [`record`]s an editor over `content` with the marks and look the caller
+    /// asks for.
+    ///
+    /// No padding of its own, so the text origin is the widget's own corner and
+    /// a recorded quad needs no offset to compare against the buffer's
+    /// geometry; no wrapping, so a line stays on one row unless a test says
+    /// otherwise.
+    fn drawn(
+        content: &Content,
+        diagnostics: &[diagnostic::Diagnostic],
+        style: Option<diagnostic::Style>,
+    ) -> Probe {
+        let editor = code_editor(content)
+            .padding(0.0)
+            .wrapping(text::Wrapping::None)
+            .on_action(Message::Edit)
+            .diagnostics(diagnostics);
+
+        record(match style {
+            Some(style) => editor.diagnostic_style(move |_severity| style),
+            None => editor,
+        })
+    }
+
+    /// The first visual row of each visible line of `content`, as [`drawn`]
+    /// leaves the buffer.
+    fn rows(content: &Content) -> Vec<(usize, f32)> {
+        let editor = content.0.borrow();
+        let hint_factor = editor.hint_factor().unwrap_or(1.0);
+
+        geometry::visible_line_rows(editor.buffer(), hint_factor).collect()
+    }
+
+    #[test]
+    fn a_diagnostic_on_one_line_squiggles_only_that_line() {
+        let content = Content::with_text("alpha\nbravo\ncharlie\ndelta");
+        let diagnostics = [mark(1, 0..5, diagnostic::Severity::Error)];
+
+        let squiggles = drawn(&content, &diagnostics, None).squiggles(squiggle().color);
+        let rows = rows(&content);
+
+        // The regression this guards paints every *other* visible line, so the other lines
+        // have to be on screen for the test to mean anything.
+        assert_eq!(rows.len(), 4);
+        assert!(!squiggles.is_empty());
+
+        // Which row each quad landed on: the last row that starts at or above it.
+        let lines: BTreeSet<usize> = squiggles
+            .iter()
+            .map(|quad| rows[rows.partition_point(|(_, top)| *top <= quad.bounds.y) - 1].0)
+            .collect();
+
+        assert_eq!(lines, BTreeSet::from([1]));
+    }
+
+    #[test]
+    fn a_diagnostic_on_a_blank_line_is_visible() {
+        let content = Content::with_text("alpha\n\ncharlie");
+        let diagnostics = [mark(1, 0..0, diagnostic::Severity::Warning)];
+
+        let color = diagnostic::Style::from(diagnostic::Severity::Warning).color;
+        let squiggles = drawn(&content, &diagnostics, None).squiggles(color);
+
+        assert!(!squiggles.is_empty(), "a blank line still has to be marked");
+
+        let fragment = {
+            let editor = content.0.borrow();
+            let hint_factor = editor.hint_factor().unwrap_or(1.0);
+
+            geometry::range_fragments(editor.buffer(), hint_factor, diagnostics[0].range)
+                .pop()
+                .expect("the blank line is on screen")
+        };
+
+        // A line with no glyphs can only be marked at its left edge, over the fallback width
+        // the geometry hands back for a run that covers none of them.
+        assert_eq!(fragment.bounds.x, 0.0);
+
+        let rows = rows(&content);
+        let (blank_top, next_top) = (rows[1].1, rows[2].1);
+
+        assert!(
+            squiggles.iter().all(|quad| {
+                quad.bounds.x >= 0.0
+                    && quad.bounds.x + quad.bounds.width <= fragment.bounds.width
+                    && quad.bounds.y > blank_top
+                    && quad.bounds.y < next_top
+            }),
+            "the mark belongs on the blank line and inside its fallback width"
+        );
+    }
+
+    #[test]
+    fn a_zero_width_diagnostic_is_visible() {
+        let content = Content::with_text("alpha bravo");
+        let diagnostics = [mark(0, 6..6, diagnostic::Severity::Hint)];
+
+        let color = diagnostic::Style::from(diagnostic::Severity::Hint).color;
+        let squiggles = drawn(&content, &diagnostics, None).squiggles(color);
+
+        assert!(
+            !squiggles.is_empty(),
+            "an insert-here diagnostic still has to be marked"
+        );
+
+        // At the column it points at rather than at the left edge: the mark is useless if it
+        // does not say where the insertion goes.
+        let left = squiggles
+            .iter()
+            .map(|quad| quad.bounds.x)
+            .fold(f32::INFINITY, f32::min);
+
+        let anchor = {
+            let editor = content.0.borrow();
+            let hint_factor = editor.hint_factor().unwrap_or(1.0);
+
+            geometry::position_anchor(editor.buffer(), hint_factor, Position { line: 0, index: 6 })
+                .expect("column 6 of the first line is on screen")
+        };
+
+        assert!(anchor.x > 0.0, "column 6 is not the left edge");
+        assert_eq!(left, anchor.x);
+    }
+
+    #[test]
+    fn a_squiggle_is_a_wave_and_is_never_snapped_flat() {
+        let content = Content::with_text("alpha bravo charlie");
+        let diagnostics = [mark(0, 0..19, diagnostic::Severity::Error)];
+
+        let squiggles = drawn(&content, &diagnostics, None).squiggles(squiggle().color);
+
+        // Snapping every segment to the pixel grid would round the whole wave onto one row
+        // and leave a dashed line, and `Quad::default()` does exactly that whenever iced is
+        // built with `crisp` — which is one of its default features.
+        assert!(squiggles.iter().all(|quad| !quad.snap));
+
+        let tops: BTreeSet<u32> = squiggles
+            .iter()
+            .map(|quad| quad.bounds.y.to_bits())
+            .collect();
+
+        // A wave of amplitude 2 drawn a pixel at a time visits three heights.
+        assert_eq!(tops.len(), 1 + squiggle().amplitude as usize);
+    }
+
+    #[test]
+    fn a_squiggle_is_drawn_a_whole_number_of_pixels_thick() {
+        let content = Content::with_text("alpha bravo");
+        let diagnostics = [mark(0, 0..11, diagnostic::Severity::Error)];
+
+        // A sub-pixel stroke gamma-blends into mud rather than thinning, so the stroke is
+        // rounded up: never under a pixel, and never a fraction of one. Flattened to a
+        // straight underline, where a quad's height is the stroke and nothing else.
+        //
+        // The stroke is also the step the wave is walked in, so a zero one would not draw a
+        // hairline — it would never finish the fragment at all.
+        for (thickness, drawn_as) in [(0.0, 1.0), (0.2, 1.0), (1.0, 1.0), (1.3, 2.0)] {
+            let style = diagnostic::Style {
+                thickness,
+                amplitude: 0.0,
+                ..squiggle()
+            };
+
+            let squiggles = drawn(&content, &diagnostics, Some(style)).squiggles(style.color);
+
+            assert!(!squiggles.is_empty());
+            assert!(
+                squiggles.iter().all(|quad| quad.bounds.height == drawn_as),
+                "a stroke of {thickness} should be drawn {drawn_as} thick"
+            );
+        }
+    }
+
+    #[test]
+    fn a_wavelength_shorter_than_the_stroke_still_draws_a_line() {
+        let content = Content::with_text("alpha bravo");
+        let diagnostics = [mark(0, 0..11, diagnostic::Severity::Error)];
+
+        // `wavelength` is a public field, so nothing stops a caller from setting it to zero.
+        // That divides by zero in the wave, and a quad whose height is `NaN` is not dropped
+        // by the clip — `Rectangle::intersection` compares with `f32::max`, which returns
+        // the other operand — so the whole editor would be painted over instead.
+        let style = diagnostic::Style {
+            wavelength: 0.0,
+            ..squiggle()
+        };
+
+        let squiggles = drawn(&content, &diagnostics, Some(style)).squiggles(style.color);
+        let baseline = {
+            let editor = content.0.borrow();
+            let hint_factor = editor.hint_factor().unwrap_or(1.0);
+
+            geometry::range_fragments(editor.buffer(), hint_factor, diagnostics[0].range)
+                .pop()
+                .expect("the whole line is on screen")
+                .baseline
+        };
+
+        assert!(!squiggles.is_empty());
+        assert!(
+            squiggles.iter().all(|quad| {
+                quad.bounds.y >= baseline
+                    && quad.bounds.y + quad.bounds.height
+                        <= baseline + 2.0 * style.thickness + style.amplitude
+            }),
+            "a degenerate wavelength still has to stay under its own line"
+        );
+    }
+
+    #[test]
+    fn a_squiggle_hangs_from_the_baseline_and_not_from_the_line_box() {
+        let content = Content::with_text("alpha bravo");
+        let diagnostics = [mark(0, 0..11, diagnostic::Severity::Error)];
+
+        let drop_below_the_baseline = |line_height: f32| {
+            let probe = record(
+                code_editor(&content)
+                    .padding(0.0)
+                    .wrapping(text::Wrapping::None)
+                    .line_height(text::LineHeight::Absolute(Pixels(line_height)))
+                    .on_action(Message::Edit)
+                    .diagnostics(&diagnostics),
+            );
+
+            let top = probe
+                .squiggles(squiggle().color)
+                .iter()
+                .map(|quad| quad.bounds.y)
+                .fold(f32::INFINITY, f32::min);
+
+            let editor = content.0.borrow();
+            let hint_factor = editor.hint_factor().unwrap_or(1.0);
+            let fragment =
+                geometry::range_fragments(editor.buffer(), hint_factor, diagnostics[0].range)
+                    .pop()
+                    .expect("the whole line is on screen");
+
+            (top - fragment.baseline, fragment.bounds.height)
+        };
+
+        let (tight, tight_box) = drop_below_the_baseline(18.0);
+        let (loose, loose_box) = drop_below_the_baseline(40.0);
+
+        assert!(
+            loose_box > tight_box,
+            "the line box has to grow for this to test anything"
+        );
+
+        // Anchored to the baseline, the wave keeps its distance from the glyphs. Anchored to
+        // the bottom of the line box it would have drifted by the whole difference.
+        assert_eq!(tight, loose);
+    }
+
+    #[test]
+    fn a_squiggle_sits_at_the_text_origin_and_not_at_the_widget_corner() {
+        let content = Content::with_text("alpha bravo");
+        let diagnostics = [mark(0, 0..11, diagnostic::Severity::Error)];
+
+        let corner = |padding: f32| {
+            let probe = record(
+                code_editor(&content)
+                    .padding(padding)
+                    .wrapping(text::Wrapping::None)
+                    .on_action(Message::Edit)
+                    .diagnostics(&diagnostics),
+            );
+
+            let squiggles = probe.squiggles(squiggle().color);
+
+            assert!(!squiggles.is_empty());
+
+            squiggles
+                .iter()
+                .map(|quad| quad.bounds.position())
+                .fold(Point::new(f32::INFINITY, f32::INFINITY), |left, at| {
+                    Point::new(left.x.min(at.x), left.y.min(at.y))
+                })
+        };
+
+        // The fragments are measured from the text origin, so the padding the editor is
+        // inset by has to be added back before anything is drawn.
+        let padded = corner(9.0);
+        let flush = corner(0.0);
+
+        assert_eq!(padded.x - flush.x, 9.0);
+        assert_eq!(padded.y - flush.y, 9.0);
+    }
+
+    #[test]
+    fn a_squiggle_stops_at_the_edge_of_the_text() {
+        let line = "alpha bravo charlie delta echo foxtrot golf hotel india juliett kilo lima";
+        let content = Content::with_text(line);
+        let diagnostics = [mark(0, 0..line.len(), diagnostic::Severity::Error)];
+
+        let squiggles = drawn(&content, &diagnostics, None).squiggles(squiggle().color);
+
+        let width = {
+            let editor = content.0.borrow();
+            let hint_factor = editor.hint_factor().unwrap_or(1.0);
+
+            geometry::range_fragments(editor.buffer(), hint_factor, diagnostics[0].range)[0]
+                .bounds
+                .width
+        };
+
+        assert!(
+            width > SIZE.width,
+            "the line has to overrun the viewport for the clip to do anything"
+        );
+
+        // Intersected against the clip rather than pushed into a layer, so nothing is drawn
+        // past the text's own edge — and nothing reaches whatever sits beside it.
+        assert!(!squiggles.is_empty());
+        assert!(
+            squiggles
+                .iter()
+                .all(|quad| quad.bounds.x + quad.bounds.width <= SIZE.width)
+        );
+    }
+
+    #[test]
+    fn an_editor_without_diagnostics_draws_exactly_what_it_drew_before() {
+        let content = Content::with_text("alpha\nbravo\ncharlie");
+
+        let bare = drawn(&content, &[], None);
+        let marked = drawn(
+            &content,
+            &[mark(1, 0..5, diagnostic::Severity::Error)],
+            None,
+        );
+
+        assert!(bare.squiggles(squiggle().color).is_empty());
+        assert_eq!(
+            marked.quads.len(),
+            bare.quads.len() + marked.squiggles(squiggle().color).len(),
+            "a diagnostic should add its own segments and nothing else"
+        );
+    }
+
+    #[test]
+    fn adding_diagnostics_changes_nothing_but_what_is_drawn() {
+        let source = "alpha bravo charlie\ndelta echo\n\nfoxtrot";
+        let diagnostics = [
+            mark(0, 6..11, diagnostic::Severity::Error),
+            mark(2, 0..0, diagnostic::Severity::Warning),
+            mark(3, 3..3, diagnostic::Severity::Hint),
+        ];
+
+        let mut plain = Content::with_text(source);
+        let mut marked = Content::with_text(source);
+
+        // Inside the first line and well right of its origin, so the click has a character
+        // to resolve to rather than a clamp at column zero.
+        let at = Point::new(46.0, 8.0);
+
+        // The element borrows the content, so the simulator has to be gone before the
+        // resulting actions can be performed on it.
+        let interact = |content: &Content, diagnostics: &[diagnostic::Diagnostic]| {
+            let mut ui = simulator(
+                editor(content, None)
+                    .diagnostics(diagnostics)
+                    .id("code-editor"),
+            );
+
+            ui.point_at(at);
+            let _ = ui.simulate(simulator::click());
+            let _ = ui.typewrite("x");
+
+            let bounds = ui
+                .find(iced_test::selector::id("code-editor"))
+                .expect("the editor carries that id")
+                .bounds();
+
+            let actions: Vec<Action> = ui
+                .into_messages()
+                .map(|Message::Edit(action)| action)
+                .collect();
+
+            (bounds, actions)
+        };
+
+        let (plain_bounds, plain_actions) = interact(&plain, &[]);
+        let (marked_bounds, marked_actions) = interact(&marked, &diagnostics);
+
+        assert_eq!(marked_bounds, plain_bounds);
+        assert_eq!(marked_actions.len(), plain_actions.len());
+
+        for action in plain_actions {
+            plain.perform(action);
+        }
+
+        for action in marked_actions {
+            marked.perform(action);
+        }
+
+        assert_ne!(marked.text(), source, "the typing has to have landed");
+        assert_eq!(marked.text(), plain.text());
+        assert_eq!(marked.cursor(), plain.cursor());
+    }
+
+    #[test]
+    fn a_screenful_of_diagnostics_stays_within_the_quad_budget() {
+        // Twenty diagnostics, each over a word, is what a file being worked on looks like.
+        let source: String = (0..20)
+            .map(|line| format!("    let value{line} = compute(argument, other);\n"))
+            .collect();
+
+        let content = Content::with_text(&source);
+        let diagnostics: Vec<diagnostic::Diagnostic> = (0..20)
+            .map(|line| mark(line, 8..14 + line / 10, diagnostic::Severity::Error))
+            .collect();
+
+        let segments = drawn(&content, &diagnostics, None)
+            .squiggles(squiggle().color)
+            .len();
+
+        let underlined: f32 = {
+            let editor = content.0.borrow();
+            let hint_factor = editor.hint_factor().unwrap_or(1.0);
+
+            diagnostics
+                .iter()
+                .flat_map(|diagnostic| {
+                    geometry::range_fragments(editor.buffer(), hint_factor, diagnostic.range)
+                })
+                .map(|fragment| fragment.bounds.width)
+                .sum()
+        };
+
+        // The whole cost model: one quad per stroke-width of underlined text.
+        assert!(
+            (segments as f32 - underlined / squiggle().thickness).abs() <= diagnostics.len() as f32,
+            "{segments} segments over {underlined} pixels of text"
+        );
+
+        // The budget the plan sets for a screenful. Coarsening the wavelength is the first
+        // lever if this ever has to give.
+        assert!(segments < 2000, "{segments} segments in one frame");
     }
 }
