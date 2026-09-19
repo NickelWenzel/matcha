@@ -1,5 +1,8 @@
 //! The code editor widget and its supporting types.
 
+pub mod decoration;
+pub mod geometry;
+
 mod content;
 mod widget;
 
