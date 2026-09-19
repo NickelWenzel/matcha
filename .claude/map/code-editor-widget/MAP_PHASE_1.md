@@ -87,11 +87,15 @@ forks. Expect it to be slow; it is not hanging.
 
 pub mod code_editor;
 
-pub use code_editor::{Content, code_editor};
+pub use code_editor::Content;
 ```
 
 `#![warn(missing_docs)]` is on from the start so docs accrete with the code instead of being
 retrofitted in Phase 7.
+
+Re-export **only `Content`** here. The `code_editor` helper fn does not exist until Phase 2, and
+Step 3 forbids stubbing it — naming it in the re-export now simply will not compile. Phase 2 adds
+it to this list.
 
 ## Step 3 — `src/code_editor.rs`
 
@@ -115,13 +119,13 @@ pub use content::Content;
 use std::cell::RefCell;
 
 use iced::advanced::graphics::text;
-use iced::advanced::text::Editor as _;
-use iced::advanced::text::editor::{Action, Cursor, Line, LineEnding};
+use iced::advanced::text::editor::{self, Editor as _};
 
-/// The text content of a [`CodeEditor`](super::CodeEditor).
+/// The text content of a code editor.
 ///
-/// Unlike iced's `text_editor::Content`, this exposes the shaped buffer to the
-/// widget, which is what makes decoration geometry possible.
+/// Unlike iced's `text_editor::Content`, which hides its editor behind a private
+/// field, this owns the editor outright — the shaped buffer inside it is the
+/// only source of the glyph geometry decorations are placed against.
 pub struct Content(RefCell<text::Editor>);
 
 impl Content {
@@ -135,18 +139,18 @@ impl Content {
         Self(RefCell::new(text::Editor::with_text(text)))
     }
 
-    /// Applies an [`Action`] to the contents.
-    pub fn perform(&mut self, action: Action) {
+    /// Applies an [`Action`](editor::Action) to the contents.
+    pub fn perform(&mut self, action: editor::Action) {
         self.0.borrow_mut().perform(action);
     }
 
     /// Moves the cursor to the given position.
-    pub fn move_to(&mut self, cursor: Cursor) {
+    pub fn move_to(&mut self, cursor: editor::Cursor) {
         self.0.borrow_mut().move_to(cursor);
     }
 
     /// Returns the current cursor position.
-    pub fn cursor(&self) -> Cursor {
+    pub fn cursor(&self) -> editor::Cursor {
         self.0.borrow().cursor()
     }
 
@@ -175,8 +179,9 @@ impl Content {
         Some(self.0.borrow().line(index)?.text.to_string())
     }
 
-    /// Returns the dominant line ending, if the contents have one.
-    pub fn line_ending(&self) -> Option<LineEnding> {
+    /// Returns the line ending taken from the FIRST line, or `None` when there
+    /// are no lines. Not a scan for the dominant ending — do not promise that.
+    pub fn line_ending(&self) -> Option<editor::LineEnding> {
         Some(self.0.borrow().line(0)?.ending)
     }
 }
@@ -189,7 +194,8 @@ closure-taking `with_line` variant; one accessor is enough until something needs
 
 Notes the implementer will hit:
 
-- **`use iced::advanced::text::Editor as _;` is required.** Nearly everything above is a *trait*
+- **`use iced::advanced::text::editor::{self, Editor as _};` is required.** Parent-module form,
+  per the style guide, and it avoids an unused-import failure under `-D warnings`. Nearly everything above is a *trait*
   method, not inherent — without the trait in scope none of it resolves. The `as _` form imports
   the trait for method resolution without binding the name, so it does not collide with
   `graphics::text::Editor` (the concrete type) and is **not** the banned `use foo as bar` aliasing.

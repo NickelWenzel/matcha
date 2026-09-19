@@ -57,6 +57,23 @@ three backends satisfy it (wgpu, tiny-skia, and the fallback).
 Defaults from upstream `:125-142`: `width: Length::Fill`, `height: Length::Fit` (**not** `Shrink`),
 `padding: Padding::new(5.0)`, `parser_settings: ()`, `highlighter: None`.
 
+## Step 1b — Decide `Content`'s derives (deliberately)
+
+Phase 1 left `Content` with **neither `Debug` nor `Clone`**; iced's `text_editor::Content` has
+both. Decide here rather than letting someone add them later by reflex, because `Clone` carries a
+runtime trap.
+
+iced implements it as `Self::with_text(&self.text())` (`widget/src/text_editor.rs:714-721`) — a
+**full reshape**, not a cheap handle copy. That is the only safe form: `graphics::text::Editor` is
+`Option<Arc<Internal>>` and `with_internal_mut` does
+`Arc::try_unwrap(..).expect("Editor cannot have multiple strong references")`
+(`graphics/src/text/editor.rs:66`). A `#[derive(Clone)]` would clone the `Arc`, **compile fine, and
+then panic on the next mutation**.
+
+So: if you add `Clone`, hand-write it as `Self::with_text(&self.text())` and document the cost.
+Never derive it. `Debug` is safe to add and worth it (`text::Editor` is `Debug`). Also update
+`src/lib.rs`'s re-export to include the `code_editor` helper fn once it exists.
+
 ## Step 2 — Constructor and helper
 
 `new` is pinned to `parser::PlainText`, exactly as upstream (`:118-144`). Add the function helper

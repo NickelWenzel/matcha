@@ -20,13 +20,19 @@ So matcha owns a `graphics::text::Editor` directly and reads geometry from
 
 | | |
 | --- | --- |
-| Rust source | **none yet** — no `Cargo.toml` |
-| Repo contents | `LICENSE`, `.gitignore`, `initial_plan.md`, `package.json` + `node_modules` (biome, unrelated to the Rust build) |
-| Branch | `master`, clean except untracked planning docs |
+| Rust source | `Cargo.toml` + 3 files, ~150 lines — Phase 1 done |
+| Tests | 6 passing; `cargo clippy --all-targets -- -D warnings` clean |
+| Branch | `master`, everything **untracked — nothing committed yet** |
 | Planning | complete — plan critiqued, one blocker found and fixed, FOSS-compared against cosmic-edit |
 
-`cargo` commands will all fail until Phase 1 creates the manifest. That is expected, not a
-regression.
+Phase 1 built in 1m32s including the cold fetch of the three git forks. `cargo tree --depth 1`
+confirms `iced` is the only direct dependency, at the pinned rev, with no `cosmic-text` leak.
+
+**Open decision: `Cargo.lock` is untracked and not in `.gitignore`.** The library convention is to
+ignore it, but that convention assumes a crate published to crates.io. matcha pins an *unpublished*
+iced by git rev precisely for reproducibility, and it cannot be published until iced 0.15 ships —
+so committing the lock is the consistent choice. Recommended: commit it. Not done; it is the repo
+owner's call.
 
 ## The plan
 
@@ -35,7 +41,7 @@ a self-contained doc a subagent can execute without reading the others.
 
 | Phase | Doc | Status |
 | --- | --- | --- |
-| 1 — Crate skeleton + `Content` | [MAP_PHASE_1.md](MAP_PHASE_1.md) | pending |
+| 1 — Crate skeleton + `Content` | [MAP_PHASE_1.md](MAP_PHASE_1.md) | **done** 2026-09-19 |
 | 2 — `CodeEditor` at parity with `TextEditor` | [MAP_PHASE_2.md](MAP_PHASE_2.md) | pending |
 | 3 — `geometry.rs` + decoration types | [MAP_PHASE_3.md](MAP_PHASE_3.md) | pending |
 | 4 — Line-number gutter | [MAP_PHASE_4.md](MAP_PHASE_4.md) | pending |
@@ -45,27 +51,29 @@ a self-contained doc a subagent can execute without reading the others.
 
 Order: `1 → 2 → 3 → 4 → {5, 6} → 7`. Phases 5 and 6 are independent and may run in parallel.
 
-## What to build next: Phase 1
+## What to build next: Phase 2
 
-Create `Cargo.toml`, `src/lib.rs`, `src/code_editor.rs`, and `src/code_editor/content.rs`.
-`Content` is a `RefCell<graphics::text::Editor>` with a mirrored subset of
-`text_editor::Content`'s API, each method a one-line delegation to the public `text::Editor` trait.
+Port `TextEditor`'s structure into `src/code_editor/widget.rs` — the struct, all builders, and the
+`Widget` impl — substituting our `Content` for the one with the private field. Reference is
+`/home/nickel/Programming/repos/iced/widget/src/text_editor.rs:94-620`; the port is close to
+mechanical and every deviation from upstream is a future bug.
 
-Three manifest details are load-bearing and must not be "simplified" (full rationale in the phase
-doc): **no `default-features = false`** (a renderer backend is mandatory or the widget does not
-typecheck), **`fira-sans` in dev-deps** (or Phase 3's geometry tests are machine-dependent), and
-**`iced_test` from the same git rev** (or the `Element`/`Renderer` types will not unify).
+Start with **Step 1b**, a decision Phase 1 deliberately deferred: `Content` currently has neither
+`Debug` nor `Clone`. `Clone` must never be derived — `graphics::text::Editor` is an `Arc` whose
+`with_internal_mut` does `Arc::try_unwrap(..).expect(..)`, so a derived `Clone` compiles and then
+panics on the next mutation. iced hand-writes it as a full reshape for exactly this reason.
 
-Before writing code, re-verify that `text_editor::Content`'s field is still private. If upstream
-has added an accessor, the entire architecture becomes unnecessary — stop and report.
+Also fold the `code_editor` helper fn into `src/lib.rs`'s re-export once it exists — Phase 1
+re-exports only `Content`, because naming a function that does not exist does not compile.
 
 ## Known risks and debt
 
-1. **cosmic-text fork drift (highest).** The geometry design rests on `LayoutRun::highlight`,
-   `LayoutRun::cursor_position`, and `Buffer::cursor_position`, verified against the **crates.io**
-   0.19.0 copy. iced compiles the **`hecrj` fork**, which was not checked out locally. Phase 3
-   starts by running `cargo fetch` and confirming those three exist. Fallback (a ~60-line port of
-   iced's private helpers, accepting a BiDi weakness) is written up in the phase doc.
+1. ~~**cosmic-text fork drift.**~~ **RETIRED 2026-09-19.** The `hecrj` fork was cloned at rev
+   `1cdc3e0f` and read directly: every API the geometry design depends on is **byte-identical** to
+   the crates.io 0.19.0 copy it was verified against. No fallback port needed. Phase 3's Step 0 now
+   records the result instead of asking for the check. The single fork-only difference — a
+   `LayoutLine::line_height(base)` helper replacing `line_height_opt.unwrap_or(base)` — affects only
+   buffers using per-span line heights, which matcha does not.
 2. **iced master moves fast.** The checkout advanced ~250 commits *during planning*, including the
    merge that split `Highlighter` into `Parser` + `Highlighter` and hoisted editor interaction into
    a public `editor::State`. The pinned rev contains this. Do not re-target it casually.
