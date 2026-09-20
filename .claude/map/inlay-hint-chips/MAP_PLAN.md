@@ -41,7 +41,7 @@ Read at iced `fa3bae52874274c012a27d4bf11a83c49e1709ae`, the pinned rev.
 | Per-line line height is **not** reachable | ✅ `highlighter::Style` carries only `color`/`style`; `Editor::update` takes one global `LineHeight`; every mutable buffer path goes through the private `buffer_mut_from_editor` (`graphics/src/text/editor.rs:1059`) |
 | tiny-skia agrees with wgpu on layer ordering | ✅ `tiny_skia/src/lib.rs:98-178` — it matters because the test renderer is pinned to tiny-skia |
 | A pushed layer is never flattened back | ✅ `Stack::merge` (`graphics/src/layer.rs:138-192`) bails when `candidate.end() > target.start()`; the base layer ends at level 5 (text) and the chip layer starts at level 1 (quads), so `5 > 1` — **the one thing that could silently undo this design, so re-check it** |
-| `Padding::x()`/`y()` are the sum accessors | ✅ `core/src/padding.rs:166,171`. **`horizontal()`/`vertical()` are builders** taking a value (`:145,159`) — the trap is that they exist with the opposite meaning |
+| `Padding::x()`/`y()` are the sum accessors | ✅ `core/src/padding.rs:170,175`. **`horizontal()`/`vertical()` are builders** taking a value (`:145,159`) — the trap is that they exist with the opposite meaning |
 
 That last row is why the alternative design — a reserved band under each code line — was rejected.
 cosmic-text supports per-span metrics (`Attrs::metrics()` → `LayoutLine::line_height_opt`) and

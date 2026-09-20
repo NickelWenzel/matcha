@@ -45,6 +45,11 @@ code_editor(&self.content)
     .inlay_hints(if self.peeking { &self.hints } else { &[] })
 ```
 
+**Know what the reveal costs.** Phase 1's measurement cache is `resize_with(hints.len(), ..)`, so
+passing `&[]` drops every cached label and the next reveal re-shapes all of them. That is one
+shaping pass per reveal rather than per frame, and fine for the example — but if it ever matters,
+the fix is to keep the cache and skip the draw rather than to empty the slice.
+
 `ModifiersChanged` is the right event — tracking `KeyPressed`/`KeyReleased` for a bare modifier is
 fiddlier and misses focus changing mid-hold. `keyboard::listen` yields only `Ignored` events, and
 neither matcha's `update` nor iced's `text_editor` calls `shell.capture_event()` at the pinned rev,
@@ -62,7 +67,7 @@ opposite of what the code does:
 | --- | --- |
 | `src/lib.rs:82-89` (the claim is at `:87`) | the documented invariant — "They may paint over source text" |
 | `src/code_editor/widget.rs:716-721` | "Call order does not decide z-order" — true only *within* a layer now |
-| `src/code_editor/widget.rs:771-775` | "an opaque chip behind one would need a layer push, which is why there is none" — the direct opposite of the new code |
+| ~~`src/code_editor/widget.rs:771-775`~~ | **Already done in Phase 1** — the comment described the loop Phase 1 replaced, so it went with it |
 | `src/code_editor/widget.rs:262` | the `inlay_hints` docstring — "A hint paints over whatever is beneath it" |
 | `src/code_editor/decoration/inlay.rs:1` | module docstring — "Labels drawn among the text without displacing it" |
 | `src/code_editor/decoration/inlay.rs:15` | `Hint`'s docstring |
@@ -88,7 +93,7 @@ it rather than dropping it.
 | --- | --- |
 | `examples/live.rs` | an arm on the existing subscription, `peeking` state, conditional `inlay_hints` |
 | `src/lib.rs` | the invariant, reworded |
-| `src/code_editor/widget.rs` | three stale comments |
+| `src/code_editor/widget.rs` | two stale comments (`:716-721` and the `inlay_hints` docstring); the third went with Phase 1's rewrite |
 | `src/code_editor/decoration/inlay.rs` | two stale docstrings |
 | `tests/snapshots.rs` | one stale comment |
 | `README.md` | usage text and scope list |

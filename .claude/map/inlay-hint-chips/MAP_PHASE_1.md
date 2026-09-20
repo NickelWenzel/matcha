@@ -79,7 +79,10 @@ what the label's own row-tall box wants.
 Two tests in `inlay.rs` assert the old default and must be repointed, not deleted:
 
 - `the_default_look_nudges_a_label_clear_of_the_glyph_it_annotates` (`:61-74`) asserts
-  `offset.y < 0.0`. Drop that assertion; keep `offset.x > 0.0` and `size_scale < 1.0`.
+  `offset.y < 0.0`. **Replace it with `assert_eq!(style.offset.y, 0.0)` — do not merely drop it.**
+  Dropping leaves nothing pinning the new default, so the critique's top finding ships unguarded
+  and the old raised offset can come back silently. The unit assertion is the cheap half; the real
+  guard is `a_chip_covers_the_whole_row_it_annotates` in Step 6, which checks the drawn geometry.
 - `the_default_offset_keeps_its_proportions_at_every_text_size` (`:76-82`) becomes
   `assert_eq!(0.0, 0.0 * 2.0)` — vacuously true, the exact failure shape the dispatch preamble
   warns about. **Repoint it at `padding`**, which does scale with `size`.
@@ -98,10 +101,12 @@ parameter.
 labels: RefCell<Vec<paragraph::Plain<Paragraph>>>,
 ```
 
-`Plain::update(Text<&str>) -> bool` re-shapes on content change *and* attribute change — it falls
-through to `raw.compare(..)`, which checks version, size, line height, font, shaping, wrapping,
-ellipsis, both alignments and hint factor (`graphics/src/text/paragraph.rs:230-254`). The cache
-cannot go stale. `resize_with(hints.len(), Plain::default)` each frame; positional keying re-shapes
+`Plain::update(Text<&str>) -> bool` (`core/src/text/paragraph.rs:100-118`) re-shapes on content
+change *and* attribute change: it compares `content` first and returns early, otherwise falling
+through to `raw.compare(..)`, whose `Paragraph` impl checks version, size, line height, font,
+shaping, wrapping, ellipsis, both alignments and hint factor
+(`graphics/src/text/paragraph.rs:230-254`). A content change re-shapes unconditionally, so the
+cache cannot go stale either way. `resize_with(hints.len(), Plain::default)` each frame; positional keying re-shapes
 a few labels when the list reorders, which is cheap and far simpler than keying by content.
 
 **Measure with `Plain`, but keep drawing with `fill_text`.** Switching the draw to
@@ -162,7 +167,7 @@ for (index, anchor, size) in placed {
 }
 ```
 
-`Padding::x()` and `y()` are the sum accessors (`core/src/padding.rs:166,171`). **`horizontal()`
+`Padding::x()` and `y()` are the sum accessors (`core/src/padding.rs:170,175`). **`horizontal()`
 and `vertical()` are builders** that take a value and return a `Padding` (`:145,159`) — using them
 here compiles into something quietly wrong, or not at all.
 
@@ -235,7 +240,8 @@ doubly because the chip's default fill is `style.background` — the *same* `Bac
 own frame quad uses (`widget.rs:636-643`), so layer depth is the only thing that distinguishes a
 chip from the frame.
 
-Widening `quads` forces a one-token edit to `Probe::squiggles` (`widget.rs:1299-1305`), and
+Widening `quads` touches two closures in `Probe::squiggles` (`widget.rs:1299-1305`) — trivial, but
+not the single token an earlier draft of this doc claimed — and
 `Probe::labels`' docstring (`:1307`) claims issue order, which now means (y, x) order rather than
 input order. Both are mechanical; name them so they are not mistaken for scope creep.
 
@@ -272,7 +278,7 @@ Plus:
 | `src/code_editor/decoration/inlay.rs` | `background` + `padding` fields; `Style::new` signature; `offset.y` default to `0.0`; repoint the two tests at `:61-74` and `:76-82` |
 | `src/code_editor/widget.rs` | `labels` cache; hint pass rewritten; `Probe` layer depth + `fill_editor`; `squiggles` tuple edit; one test replaced, six added |
 | `src/code_editor/widget.rs:900` | `const HINT: inlay::Style` is a struct literal with no `..` — add both fields. `Color::from_rgb` and `Padding::new` are both `const`, so it stays a `const` |
-| `Style::new` call sites | `widget.rs:741` (library), `widget.rs:2027`, `widget.rs:2158`, `inlay.rs:63`, `inlay.rs:78`, `inlay.rs:79` — six, all mechanical. No example or integration test calls it |
+| `Style::new` call sites | `widget.rs:741` (library), `widget.rs:2027`, `widget.rs:2158`, and three in `inlay.rs` (`:63`, `:78`, `:79`) — six, all mechanical. No example or integration test calls it. The three in `inlay.rs` collapse behind a local `look(text_size)` helper rather than repeating the constructor |
 
 ## Verification
 
@@ -301,3 +307,16 @@ cargo build --examples
 - Do not touch `editor.update`, `perform`, `State::update`, `input_method`, or `operate`.
 - Do not push a layer per hint; do not set `snap: false`; do not add a `Border`.
 - Do not weaken any test other than the one named as superseded.
+
+## Recorded while implementing
+
+Two consequences of decisions this plan already made, flagged rather than fixed:
+
+- **Each chip snaps to the pixel grid independently.** `snap` stays at its `Quad::default()` value,
+  so two chips that clear each other by a fraction of a logical pixel can overlap or gap by one
+  physical pixel once snapped. `Probe` records pre-snap floats, so no test can see this — it would
+  need a real backend and a pixel comparison.
+- **`labels.resize_with(hints.len(), ..)` drops the whole measurement cache when an app passes
+  `&[]`**, which is exactly what Phase 2's hold-to-reveal does on every key release. Each reveal
+  then re-shapes every label: one shaping pass, not per-frame, but worth knowing before adding
+  hints to a large file.
