@@ -2,7 +2,7 @@
 
 use std::borrow::Cow;
 
-use iced::{Background, Color, Padding, Pixels, Vector};
+use iced::{Background, Border, Color, Padding, Pixels, Vector};
 
 use crate::Position;
 
@@ -28,6 +28,8 @@ pub struct Style {
     pub color: Color,
     /// What the chip behind the label is filled with.
     pub background: Background,
+    /// The outline drawn around the chip, inside its bounds.
+    pub border: Border,
     /// Label size as a fraction of the editor's text size.
     pub size_scale: f32,
     /// Offset from the anchor, in logical pixels.
@@ -44,14 +46,28 @@ impl Style {
     /// for every theme; the widget passes the color its theme dims text to and
     /// the background the editor itself is filled with, so that a chip reads as
     /// a hole punched in the code rather than as a badge stuck over it. The
-    /// text size is the code's, which the padding is a fraction of so that the
-    /// chip keeps its proportions at every size.
+    /// outline is taken from the label rather than asked for as a third color,
+    /// because the fill is the caller's and can be anything, and the hue the
+    /// label is already legible in is the one guaranteed to read against it.
+    /// The text size is the code's, which the padding is a fraction of so that
+    /// the chip keeps its proportions at every size.
     pub fn new(color: Color, background: Background, text_size: Pixels) -> Self {
         let size = text_size * SIZE_SCALE;
 
         Self {
             color,
             background,
+            // Scaled well down, because a frame at the label's full strength is read
+            // before the label is, and the label is the point. It costs a hairline of
+            // the occlusion: a quad mixes its border *into* its fill rather than over
+            // it, so the outermost pixel of a chip is only as opaque as this. Rounded
+            // and one pixel wide like the editor's own frame, so that a chip looks like
+            // part of the widget it sits in rather than something pasted over it.
+            border: Border {
+                color: color.scale_alpha(0.4),
+                width: 1.0,
+                radius: 2.0.into(),
+            },
             size_scale: SIZE_SCALE,
             // Clear of the anchor to the right, so the label does not start on top of the
             // glyph it annotates — and level with the row, because a chip stands exactly
@@ -95,6 +111,47 @@ mod tests {
         // raising it would uncover the bottom of that row — where the descenders are —
         // while clipping the row above.
         assert_eq!(style.offset.y, 0.0);
+    }
+
+    #[test]
+    fn the_default_chip_is_outlined_in_the_color_of_its_label() {
+        let style = look(16.0);
+
+        // A border of no width is drawn as nothing at all, which leaves a chip as the
+        // bare fill it was before.
+        assert!(style.border.width > 0.0);
+
+        // The label's own hue. The fill is the caller's and can be any color, so an
+        // outline in a hue of its own is a gamble on a contrast nobody checked, while
+        // this one is already known to read there — the label is drawn in it.
+        assert_eq!(
+            [
+                style.border.color.r,
+                style.border.color.g,
+                style.border.color.b
+            ],
+            [style.color.r, style.color.g, style.color.b]
+        );
+
+        // Visible, but dimmer than what it surrounds: a frame as strong as the glyphs
+        // inside it is read first, and the label is the thing worth reading.
+        assert!(style.border.color.a > 0.0);
+        assert!(style.border.color.a < style.color.a);
+
+        // Rounded on every corner, so a chip reads as something laid into the code
+        // rather than as a block of it.
+        let radius = style.border.radius;
+
+        assert!(
+            [
+                radius.top_left,
+                radius.top_right,
+                radius.bottom_right,
+                radius.bottom_left
+            ]
+            .iter()
+            .all(|corner| *corner > 0.0)
+        );
     }
 
     #[test]

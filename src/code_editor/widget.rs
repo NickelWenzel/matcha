@@ -858,6 +858,7 @@ where
                     renderer.fill_quad(
                         renderer::Quad {
                             bounds: chip + translation,
+                            border: inlay_style.border,
                             ..renderer::Quad::default()
                         },
                         inlay_style.background,
@@ -949,7 +950,8 @@ mod tests {
     use std::ops::Range;
 
     use iced::advanced::image;
-    use iced::{Background, Color, Point, Transformation};
+    use iced::border::Radius;
+    use iced::{Background, Border, Color, Point, Transformation};
     use iced_test::simulator;
 
     use crate::decoration::TextRange;
@@ -983,6 +985,16 @@ mod tests {
     const HINT: inlay::Style = inlay::Style {
         color: Color::from_rgb(1.0, 0.0, 1.0),
         background: Background::Color(Color::from_rgb(0.0, 1.0, 0.0)),
+        border: Border {
+            color: Color::from_rgb(0.0, 0.0, 1.0),
+            width: 3.0,
+            radius: Radius {
+                top_left: 5.0,
+                top_right: 5.0,
+                bottom_right: 5.0,
+                bottom_left: 5.0,
+            },
+        },
         size_scale: 0.5,
         offset: Vector::new(3.0, -7.0),
         padding: Padding::new(2.0),
@@ -2311,6 +2323,37 @@ mod tests {
 
         assert_eq!(padded.width, long.width + 6.0);
         assert_eq!(padded.height, long.height + 6.0);
+    }
+
+    #[test]
+    fn a_chip_is_outlined_with_the_border_its_style_carries() {
+        // A quad left at its default carries a transparent edge of no width, so a
+        // border that never reaches the quad and a border nobody asked for look the
+        // same from here unless the look under test differs from that default.
+        assert_ne!(HINT.border, Border::default());
+
+        let content = Content::with_text("alpha bravo");
+        let hints = [hint(0, 6, ": usize")];
+
+        let probe = record(
+            code_editor(&content)
+                .padding(0.0)
+                .size(TEXT_SIZE)
+                .wrapping(text::Wrapping::None)
+                .on_action(Message::Edit)
+                .inlay_hints(&hints)
+                .inlay_style(HINT),
+        );
+
+        let chips = probe.chips();
+        let [(chip, _)] = chips.as_slice() else {
+            panic!("one hint should draw one chip");
+        };
+
+        // The whole border and not merely its presence: the width separates the chip
+        // from code of a similar color behind it, and the radius is what keeps a chip
+        // from reading as a block of the editor's own frame.
+        assert_eq!(chip.border, HINT.border);
     }
 
     #[test]
