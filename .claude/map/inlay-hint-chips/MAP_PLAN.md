@@ -107,8 +107,15 @@ per-hint measurement cache; the draw pass moves inside a guarded `with_layer` an
 left to right per row; `Probe` learns to record layer depth, and the tests that need it land here
 too. [MAP_PHASE_1.md](MAP_PHASE_1.md)
 
-**Phase 2 — Reveal and docs.** Hold-to-reveal in the example, and the eight places that still
-document hints as transparent. No library code. [MAP_PHASE_2.md](MAP_PHASE_2.md)
+**Phase 2 — Documentation.** The eleven places that still describe the old, transparent hints,
+plus the two things that shipped after this plan was written: the chip border, and that visibility
+is the application's. No library code, no tests, no example changes.
+[MAP_PHASE_2.md](MAP_PHASE_2.md)
+
+Hold-to-reveal is **not** built. Both examples carry a toggle instead, added at the owner's
+request — the same mechanism (`&hints` versus `&[]`) with a different trigger, so a second control
+would be a knob that teaches nothing. The momentary peek the design assumes is documented in prose
+rather than demonstrated.
 
 `1 → 2`. The `Probe` work and the tests belong to Phase 1, not Phase 2: a phase whose exit criteria
 are "the chip is as wide as its label" and "two hints do not overlap" cannot verify either without

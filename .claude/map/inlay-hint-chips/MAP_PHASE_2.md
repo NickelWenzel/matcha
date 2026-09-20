@@ -1,102 +1,97 @@
-# Phase 2 — Reveal and docs
+# Phase 2 — Documentation
 
 ## Prerequisites
 
-Phase 1 complete: hints draw as opaque chips inside a guarded layer push, `Probe` records layer
-depth, and `a_hint_is_drawn_on_an_opaque_chip_above_the_code` fails if the push is removed.
+Phase 1 complete, plus the follow-on that outlined the chips and put a hints toggle in both
+examples. 76 tests green.
 
 ## Goal
 
-Show the hold-to-reveal pattern in a running example, and correct every place the crate still tells
-users that hints merely paint over code.
+Every place the crate describes inlay hints now describes the old ones. Correct all of them, and
+document the two things that shipped after the plan was written: the border, and that visibility is
+the application's to control.
 
-**Exit criteria:** `cargo doc --no-deps` clean; `cargo build --examples` clean; no doc, comment, or
-docstring still claims hints are transparent overlays.
+**Exit criteria:** `cargo doc --no-deps` clean; `cargo test` green (the doctest in `lib.rs` has to
+keep compiling); no doc, comment, or docstring still claims hints are transparent, and none claims
+opaque chips are out of scope.
 
-This phase writes no library code. If it finds itself changing `src/code_editor/`, something from
-Phase 1 was left unfinished.
+**This phase writes no library code and adds no tests.** If it finds itself editing
+`src/code_editor/*.rs` beyond doc comments, or touching `examples/`, something is wrong.
 
-## Step 1 — Hold-to-reveal in the example
+## What changed since this doc was written
 
-The widget knows nothing about this. An app controls visibility by passing hints or not, which is
-why there is no reveal API — a binding in the widget would duplicate app state and force a
-key-choice policy that would have to be configurable anyway.
+**Hold-to-reveal is not built.** The original plan demonstrated the momentary peek with a held
+modifier. Both examples now carry a **toggle** instead, added at the owner's request. It is the
+same mechanism — an app passes `&hints` or `&[]`; the widget has no visibility API — differing only
+in the trigger, so building a second control into an example that already has one would add a knob
+without teaching anything.
 
-`examples/live.rs` **already has a `subscription`** (`:163-171`) mapping Escape → `Restored`, which
-the Restore button flow depends on. **Add an arm to it; do not replace the method.**
+**Document the peek in prose instead.** The crate docs should say that hints are best shown
+momentarily and that binding the same conditional to a held key is how you get that, without an
+example doing it. That preserves the premise that justifies opaque chips while leaving the examples
+legible.
 
-```rust
-keyboard::listen().filter_map(|event| match event {
-    // ...the existing Escape arm stays...
-    keyboard::Event::ModifiersChanged(modifiers) => {
-        Some(Message::PeekHints(modifiers.control()))
-    }
-    _ => None,
-})
-```
+**Chips are outlined**, from the label's colour scaled down. `inlay::Style` now carries
+`border: Border` alongside `background` and `padding`. Nothing documents this yet.
 
-and in `view`:
+## Step 1 — Correct every stale claim
 
-```rust
-code_editor(&self.content)
-    .on_action(Message::Edit)
-    // Hints are a peek: the chips hide the code underneath, which is the point
-    // while the key is held and unhelpful the rest of the time.
-    .inlay_hints(if self.peeking { &self.hints } else { &[] })
-```
-
-**Know what the reveal costs.** Phase 1's measurement cache is `resize_with(hints.len(), ..)`, so
-passing `&[]` drops every cached label and the next reveal re-shapes all of them. That is one
-shaping pass per reveal rather than per frame, and fine for the example — but if it ever matters,
-the fix is to keep the cache and skip the draw rather than to empty the slice.
-
-`ModifiersChanged` is the right event — tracking `KeyPressed`/`KeyReleased` for a bare modifier is
-fiddlier and misses focus changing mid-hold. `keyboard::listen` yields only `Ignored` events, and
-neither matcha's `update` nor iced's `text_editor` calls `shell.capture_event()` at the pinned rev,
-so the event does reach it. `Modifiers::control()` is at `core/src/keyboard/modifiers.rs:55`.
-
-Level 0 throughout: plain `State`/`Message`/`update`/`view`, no `Action<I, M>`. iced function
-helpers, never `Widget::new`.
-
-## Step 2 — Correct every stale claim
-
-The old invariant is repeated in more places than the obvious one. All of these now say the
-opposite of what the code does:
+Line numbers verified against the current tree; re-check before editing, since Phase 1 moved
+several.
 
 | Location | What it still claims |
 | --- | --- |
-| `src/lib.rs:82-89` (the claim is at `:87`) | the documented invariant — "They may paint over source text" |
-| `src/code_editor/widget.rs:716-721` | "Call order does not decide z-order" — true only *within* a layer now |
-| ~~`src/code_editor/widget.rs:771-775`~~ | **Already done in Phase 1** — the comment described the loop Phase 1 replaced, so it went with it |
-| `src/code_editor/widget.rs:262` | the `inlay_hints` docstring — "A hint paints over whatever is beneath it" |
+| `README.md:100-101` | **"Opaque chips behind inlay hints"** is in the *not in scope* list, with the layer reasoning as justification. The headline correction: it is not only in scope, it shipped |
+| `README.md:9` | "drawn among the code without displacing any of it" |
+| `README.md:86` | "They may paint over source text" |
+| `src/lib.rs:82` | the invariant's heading — "Inlay hints are overlays" |
+| `src/lib.rs:87` | "line paints over the code there" |
+| `src/code_editor/widget.rs:264` | the `inlay_hints` docstring — "A hint paints over whatever is beneath it" |
+| `src/code_editor/widget.rs:~722` | "Call order does not decide z-order" — true only *within* a layer now |
 | `src/code_editor/decoration/inlay.rs:1` | module docstring — "Labels drawn among the text without displacing it" |
-| `src/code_editor/decoration/inlay.rs:15` | `Hint`'s docstring |
+| `src/code_editor/decoration/inlay.rs:15` | `Hint`'s docstring — "drawn without affecting layout" |
 | `tests/snapshots.rs:95` | "where it paints over the code" |
-| `README.md:86`, `README.md:100` | usage text and the "not in scope" list |
 
-The crate-level invariant becomes something like:
+**Two that must NOT change**, because they are still true and deleting them would lose something:
 
-> **Inlay hints are opaque overlays.** Each label is drawn on a solid chip that hides the code
-> beneath it, in a layer above the text — so hints are best shown momentarily, while a key is held.
-> They still never change layout: nothing reflows, and a click lands on the character under the
-> chip exactly as if the chip were not there.
+- `README.md:94` — "**Virtual text.** Hints are overlays; nothing here pushes code aside to make
+  room." Chips hide code; they still do not displace it. This entry is the distinction the whole
+  architecture rests on and it belongs in the scope list.
+- `widget.rs:~722` is **narrowed, not deleted.** That call order does not decide z-order *within a
+  layer* is still what makes squiggles land beneath the glyphs with no ordering work. Only the
+  implication that it holds across layers is now wrong.
 
-Keep the second half. It is still true and it is the invariant that matters.
+The crate-level invariant in `src/lib.rs` becomes something like:
 
-`widget.rs:716-721` should not simply be deleted — the fact that call order does not decide z-order
-*within* a layer is still what makes squiggles land under the glyphs without ordering work. Narrow
-it rather than dropping it.
+> **Inlay hints are opaque overlays.** Each label sits on a filled, outlined chip that hides the
+> code beneath it, drawn in a layer above the text — so hints read best shown momentarily rather
+> than left on. They still never change layout: nothing reflows, and a click lands on the character
+> under a chip exactly as if the chip were not there.
+
+Keep that second sentence. It is still true and it is the invariant that matters.
+
+## Step 2 — Document what shipped after the plan
+
+**Visibility is the application's.** The widget has no reveal API, deliberately: an app turns hints
+off by passing an empty slice. Both examples show it with a toggle. The crate docs should say this
+plainly and note that binding the same conditional to a held modifier is how the momentary peek the
+design assumes is built — one or two sentences, no example.
+
+**The chips are outlined.** `inlay::Style` carries `border`, derived by default from the label's
+colour scaled down. Worth a sentence where `Style` is documented, including the tradeoff already
+recorded in the code: a quad mixes its border into its fill rather than compositing it over, so the
+outermost pixel is only as opaque as the border — a soft edge rather than a hole, since the rounded
+boundary is anti-aliased either way.
 
 ## Files
 
 | File | Change |
 | --- | --- |
-| `examples/live.rs` | an arm on the existing subscription, `peeking` state, conditional `inlay_hints` |
-| `src/lib.rs` | the invariant, reworded |
-| `src/code_editor/widget.rs` | two stale comments (`:716-721` and the `inlay_hints` docstring); the third went with Phase 1's rewrite |
-| `src/code_editor/decoration/inlay.rs` | two stale docstrings |
+| `src/lib.rs` | the invariant, reworded; visibility and the peek pattern |
+| `README.md` | the scope-list entry removed, two usage claims corrected, the border and the toggle mentioned |
+| `src/code_editor/widget.rs` | the `inlay_hints` docstring; the z-order comment narrowed |
+| `src/code_editor/decoration/inlay.rs` | module and `Hint` docstrings; a sentence on `border` |
 | `tests/snapshots.rs` | one stale comment |
-| `README.md` | usage text and scope list |
 
 ## Verification
 
@@ -105,27 +100,27 @@ cargo clippy --all-targets -- -D warnings
 cargo test
 cargo doc --no-deps
 cargo build --examples
+grep -rn "paints over\|without displacing" src/ tests/ README.md    # expect no hits
 ```
 
-`cargo run --example live` is the human's step: hold the key, confirm chips appear over the code
-and vanish on release.
+`cargo run --example showcase` stays the human's step.
 
 ## Spot checks
 
 | Input | Expectation |
 | --- | --- |
-| Hold the reveal key | Chips appear; code beneath is hidden, not blended |
-| Release it | Code exactly as it was; no residue |
-| Press Escape | Still restores the buffer — the existing arm survived |
-| Type while holding | Editing works normally; chips track their anchors |
-| Click through a chip | Caret lands on the character underneath |
-| `grep -ri "paints over"` | No hits outside this plan's own docs |
+| `README.md` scope list | No longer claims opaque chips are out of scope; still claims virtual text is |
+| `src/lib.rs` invariant | Says hints hide code, and that they still never change layout |
+| `cargo doc` output | The `Style` docs mention the border; `inlay_hints` does not promise transparency |
+| The `lib.rs` doctest | Still compiles — it is a real compile check, not prose |
+| `grep -rn "paints over"` | No hits outside this plan's own docs |
 
 ## Do NOT change in this phase
 
-- No library code. No reveal API on the widget.
-- No new placement modes, no end-of-line fallback, no below-line band.
-- Do not un-`#[ignore]` the snapshot tests or generate baselines: nothing in this crate has been
-  checked by eye, and `matches_image` writes a golden on first run and returns `true`. The chips
-  change what every hint snapshot would capture, so the baselines matter more than before, not less.
-- Do not replace `examples/live.rs`'s subscription wholesale.
+- No library code beyond doc comments. No tests. No example changes.
+- Do not add a reveal API, a placement mode, an end-of-line fallback, or a below-line band.
+- Do not delete `README.md:94` — hints still do not displace code, and that is the distinction
+  worth keeping.
+- Do not un-`#[ignore]` the snapshot tests or generate baselines. Nothing here has been checked by
+  eye, and chips changed what every hint snapshot would capture, so an unreviewed baseline would
+  bake in precisely the thing nobody has looked at.
