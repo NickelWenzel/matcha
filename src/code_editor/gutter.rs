@@ -54,7 +54,7 @@ pub(crate) fn width<Paragraph: text::Paragraph>(
 /// horizontal one, which is what keeps the numbers still while the text slides
 /// sideways.
 ///
-/// [`visible_line_rows`]: crate::geometry::visible_line_rows
+/// [`visible_line_rows`]: crate::code_editor::geometry::visible_line_rows
 pub(crate) fn draw<Renderer: text::Renderer>(
     style: Style,
     renderer: &mut Renderer,

@@ -348,15 +348,23 @@ Name tests as sentences: `a_range_on_one_line_yields_fragments_only_on_that_line
 
 | File | Change |
 | --- | --- |
-| `src/code_editor.rs` | declare `pub mod decoration; pub mod geometry;` |
+| `src/code_editor.rs` | declare `pub mod decoration;` and `pub(crate) mod geometry;` |
 | `src/code_editor/decoration.rs` | new — `TextRange`, declares `diagnostic` + `inlay` |
 | `src/code_editor/decoration/diagnostic.rs` | new — `Diagnostic`, `Severity`, `Style` |
 | `src/code_editor/decoration/inlay.rs` | new — `Hint`, `Style` |
 | `src/code_editor/geometry.rs` | new — `Fragment` + the three functions + tests |
 | `src/lib.rs` | re-export `decoration` and `geometry` |
 
-The modules must be `pub` and re-exported, or `-D warnings` trips `dead_code` on a caller-less
-module (nothing consumes them until Phases 4-6).
+`decoration` is `pub` because the builders take `&[diagnostic::Diagnostic]` and `&[inlay::Hint]`,
+so callers must be able to name those types.
+
+`geometry` is **`pub(crate)`**. It was briefly `pub` during this phase for one reason only — with
+no callers until Phases 4-6, `-D warnings` trips `dead_code` on a caller-less private module — and
+that was a scaffolding decision, not an API one. Every function takes a `cosmic_text::Buffer`, and
+`Content` keeps its editor `pub(super)`, so no external caller can obtain one: leaving it `pub`
+ships a module nobody outside the crate can call. Once Phases 4-6 wire all three functions into
+`widget.rs`, the `dead_code` pressure is gone and it narrows. If you hit the warning mid-phase,
+reach for `#[allow(dead_code)]` with a note rather than widening the API to silence a lint.
 
 ## Verification
 

@@ -67,7 +67,7 @@ impl From<Severity> for Style {
 /// `fragment` and `baseline` come from [`geometry::range_fragments`] with the
 /// text origin already added, so both are in the renderer's own coordinates.
 ///
-/// [`geometry::range_fragments`]: crate::geometry::range_fragments
+/// [`geometry::range_fragments`]: crate::code_editor::geometry::range_fragments
 pub(crate) fn draw_squiggle<Renderer: renderer::Renderer>(
     renderer: &mut Renderer,
     fragment: Rectangle,

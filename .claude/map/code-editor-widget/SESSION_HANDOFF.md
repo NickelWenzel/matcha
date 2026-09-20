@@ -24,12 +24,12 @@ So matcha owns a `graphics::text::Editor` directly and reads geometry from
 | Rust source | `Cargo.toml` + 10 files + 2 examples + 2 integration tests — Phases 1-7 done |
 | Tests | 61 unit + 5 integration + 2 doctests green; 4 snapshot tests `#[ignore]`d and **never run** |
 | Lints | `cargo clippy --all-targets -- -D warnings` clean; `cargo doc --no-deps` warning-free |
-| Branch | `code-editor-widget`, 23 commits, **Phase 7 is uncommitted in the working tree** |
+| Branch | `code-editor-widget`, 29 commits, working tree clean, **not pushed** |
 
-Phase 7 left these changes unstaged: new `README.md`, `examples/live.rs`, `tests/behaviour.rs`,
-`tests/snapshots.rs`; modified `src/lib.rs` (crate docs) and `examples/showcase.rs` (status line
-now reads "line N, byte M" rather than `N:M`, because bytes are the units decorations are anchored
-in and a bare `N:M` reads as a column).
+Phase 7 added `README.md`, `examples/live.rs`, `tests/behaviour.rs` and `tests/snapshots.rs`, the
+crate-level docs in `src/lib.rs`, and a `showcase` status line that now reads "line N, byte M"
+rather than `N:M`, because bytes are the units decorations are anchored in and a bare `N:M` reads
+as a column. Follow-on item 1 has since been closed: `geometry` is `pub(crate)`.
 
 ## The one thing that is still not done
 
@@ -75,12 +75,16 @@ expectation from the code under test.
 
 Phase 7 added no features. These are the gaps it turned up:
 
-1. **`matcha::geometry` is public API that no external caller can reach.** All three functions
-   take `&cosmic_text::Buffer`, and `Content`'s editor is `pub(super)`, so there is no way to get
-   the buffer belonging to a `Content` from outside the crate. The module was made `pub` in Phase 3
-   only to dodge `dead_code` under `-D warnings` (critique m10); every function is now called from
-   `widget.rs`, so `pub(crate)` would compile clean. Either narrow it, or add a `Content::buffer()`
-   accessor and mean it.
+1. ~~**`matcha::geometry` is public API that no external caller can reach.**~~ **DONE 2026-09-20.**
+   Narrowed to `pub(crate)` and dropped from the crate-root re-export. Verified against a clean
+   `cargo doc` rebuild — stale doc directories are not pruned, so the first check wrongly reported
+   it as still public. `decoration` and `gutter` stay public, since the builders take
+   `diagnostic::Diagnostic`, `inlay::Hint` and `gutter::Style`. The alternative — a public
+   `Content::buffer()` — was rejected: it would put a git-pinned fork's types in this crate's API.
+   Two intra-doc links in `gutter.rs` and `diagnostic.rs` pointed at `crate::geometry` and had to
+   move to `crate::code_editor::geometry`; they were broken silently, because `cargo doc` only
+   checks links on items it documents and both carriers are `pub(crate)`. Use
+   `cargo doc --document-private-items` to see them.
 2. **`Content` exposes no bounds.** This is what made the Tier 2 gutter test have to be written as
    "a constant translation" rather than "the same click". A `Content::bounds()` (the text area the
    editor was last laid out in) would make gutter arithmetic testable from outside and is what any

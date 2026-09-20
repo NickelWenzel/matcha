@@ -126,5 +126,5 @@ pub mod code_editor;
 
 pub use code_editor::{
     Action, Binding, CodeEditor, Content, Cursor, Edit, KeyPress, Line, LineEnding, Motion,
-    Position, Selection, code_editor, decoration, geometry, gutter,
+    Position, Selection, code_editor, decoration, gutter,
 };

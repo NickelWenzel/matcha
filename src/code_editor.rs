@@ -1,8 +1,14 @@
 //! The code editor widget and its supporting types.
 
 pub mod decoration;
-pub mod geometry;
 pub mod gutter;
+
+// Not public: every function here takes the `cosmic_text::Buffer` behind a `Content`, and
+// `Content` keeps its editor `pub(super)`, so no caller outside the crate can obtain one. It
+// was `pub` only to keep `dead_code` quiet while it had no callers; the widget now calls all
+// three. Widening it again means committing to a public `Content::buffer()`, which would put a
+// git-pinned fork's types in this crate's API.
+pub(crate) mod geometry;
 
 mod content;
 mod widget;
