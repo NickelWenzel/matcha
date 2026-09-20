@@ -46,6 +46,8 @@ pub struct Style {
     pub color: Color,
     /// What the chip behind the label is filled with.
     pub background: Background,
+    /// The outline drawn around the chip, inside its bounds.
+    pub border: Border,
     /// Label size as a fraction of the editor's text size.
     pub size_scale: f32,
     /// Offset from the anchor, in logical pixels.
@@ -87,7 +89,14 @@ Two tests in `inlay.rs` assert the old default and must be repointed, not delete
   `assert_eq!(0.0, 0.0 * 2.0)` — vacuously true, the exact failure shape the dispatch preamble
   warns about. **Repoint it at `padding`**, which does scale with `size`.
 
-**Do not add a `Border` field.** A solid box is what was asked for.
+**The chip is outlined.** `border` is derived from the label's color inside `Style::new` rather
+than asked for as a fourth parameter: the fill is the caller's and can be any color, so the one hue
+guaranteed to read against it is the one the label is already legible in. It is scaled well down in
+alpha, because a frame as strong as the glyphs it surrounds is read before them, and takes the
+radius and width of the editor's own frame so a chip looks like part of the widget it sits in.
+`Border` is `Copy` (`core/src/border.rs:6-15`) and `renderer::Quad` already carries one
+(`core/src/renderer.rs:105-106`), so `Style` keeps its derive and the draw side passes the field
+through rather than growing any geometry.
 
 ## Step 2 — Measure every label
 
@@ -269,15 +278,20 @@ Plus:
   makes it pass for the wrong reason. This is the test that catches the Step 3 clamp bug.
 - `two_hints_on_different_rows_both_sit_at_their_anchors` — the row reset works.
 - `a_hint_without_a_style_still_gets_an_opaque_chip` — the default fill is not transparent.
+- `a_chip_is_outlined_with_the_border_its_style_carries` — the whole `Border` reaches the quad.
+  Assert first that the look under test differs from `Border::default()`, or a dropped field passes:
+  a quad left at its default carries a transparent edge of no width, which looks like no border at
+  all. The default's own values are pinned in `inlay.rs` by
+  `the_default_chip_is_outlined_in_the_color_of_its_label`.
 - `an_editor_without_hints_pushes_no_layer_and_draws_no_chip` — the Step 4 guard.
 
 ## Files
 
 | File | Change |
 | --- | --- |
-| `src/code_editor/decoration/inlay.rs` | `background` + `padding` fields; `Style::new` signature; `offset.y` default to `0.0`; repoint the two tests at `:61-74` and `:76-82` |
+| `src/code_editor/decoration/inlay.rs` | `background`, `border` + `padding` fields; `Style::new` signature; `offset.y` default to `0.0`; repoint the two tests at `:61-74` and `:76-82` |
 | `src/code_editor/widget.rs` | `labels` cache; hint pass rewritten; `Probe` layer depth + `fill_editor`; `squiggles` tuple edit; one test replaced, six added |
-| `src/code_editor/widget.rs:900` | `const HINT: inlay::Style` is a struct literal with no `..` — add both fields. `Color::from_rgb` and `Padding::new` are both `const`, so it stays a `const` |
+| `src/code_editor/widget.rs:900` | `const HINT: inlay::Style` is a struct literal with no `..` — add all three fields. `Color::from_rgb` and `Padding::new` are both `const`, and `Border` and `Radius` are plain structs of public `f32`s, so it stays a `const` |
 | `Style::new` call sites | `widget.rs:741` (library), `widget.rs:2027`, `widget.rs:2158`, and three in `inlay.rs` (`:63`, `:78`, `:79`) — six, all mechanical. No example or integration test calls it. The three in `inlay.rs` collapse behind a local `look(text_size)` helper rather than repeating the constructor |
 
 ## Verification
@@ -305,7 +319,7 @@ cargo build --examples
 
 - No reveal API, no keyboard handling — Phase 2, and then only in the example.
 - Do not touch `editor.update`, `perform`, `State::update`, `input_method`, or `operate`.
-- Do not push a layer per hint; do not set `snap: false`; do not add a `Border`.
+- Do not push a layer per hint; do not set `snap: false`.
 - Do not weaken any test other than the one named as superseded.
 
 ## Recorded while implementing
