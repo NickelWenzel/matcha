@@ -9,7 +9,7 @@
 //! like, and which has to come out as nothing drawn rather than as a panic.
 
 use iced::keyboard;
-use iced::widget::{button, column, row, space, text};
+use iced::widget::{button, column, row, space, text, toggler};
 use iced::{Center, Element, Fill, Font, Subscription, Theme, color};
 
 use matcha::decoration::{TextRange, diagnostic, inlay};
@@ -42,6 +42,11 @@ struct State {
     content: Content,
     diagnostics: Vec<diagnostic::Diagnostic>,
     hints: Vec<inlay::Hint<'static>>,
+    /// Whether the hints above are handed to the widget at all.
+    ///
+    /// The widget has no say in this: a chip is opaque, so the only way to read
+    /// the code underneath is for the application to stop supplying the hint.
+    show_hints: bool,
     /// The end of the buffer as it was loaded, decorated once and never
     /// re-derived.
     ///
@@ -56,6 +61,7 @@ enum Message {
     Edit(Action),
     LastLineDeleted,
     Restored,
+    HintsToggled(bool),
 }
 
 impl State {
@@ -70,6 +76,7 @@ impl State {
             content,
             diagnostics: Vec::new(),
             hints: Vec::new(),
+            show_hints: true,
         };
 
         state.reanalyze();
@@ -105,6 +112,9 @@ impl State {
                 self.content = Content::with_text(SOURCE);
                 self.reanalyze();
             }
+            Message::HintsToggled(show_hints) => {
+                self.show_hints = show_hints;
+            }
         }
     }
 
@@ -112,6 +122,9 @@ impl State {
         let controls = row![
             button(text("Delete the last line")).on_press(Message::LastLineDeleted),
             button(text("Restore")).on_press(Message::Restored),
+            toggler(self.show_hints)
+                .label("Inlay Hints")
+                .on_toggle(Message::HintsToggled),
             space::horizontal(),
             text(format!(
                 "{} diagnostics, {} hints",
@@ -144,7 +157,11 @@ impl State {
                 .height(Fill)
                 .on_action(Message::Edit)
                 .diagnostics(&self.diagnostics)
-                .inlay_hints(&self.hints)
+                // Hiding a hint is passing none, not asking the widget to stop drawing
+                // the ones it has: what the editor is given is the whole of what it
+                // knows about. The hints themselves are still re-derived on every edit,
+                // which is what the count above reports.
+                .inlay_hints(if self.show_hints { &self.hints } else { &[] })
                 .gutter(gutter::Style {
                     color: color!(0x928374),
                     spacing: 12.0,

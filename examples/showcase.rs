@@ -65,6 +65,11 @@ struct Showcase {
     content: Content,
     theme: Theme,
     word_wrap: bool,
+    /// Whether the hints below are handed to the widget at all.
+    ///
+    /// The widget has no say in this: a chip is opaque, so the only way to see
+    /// the code it covers is for the application to stop supplying the hint.
+    show_hints: bool,
     diagnostics: Vec<diagnostic::Diagnostic>,
     hints: Vec<inlay::Hint<'static>>,
 }
@@ -73,6 +78,7 @@ struct Showcase {
 enum Message {
     Edit(Action),
     WordWrapToggled(bool),
+    HintsToggled(bool),
     ThemeSelected(Theme),
 }
 
@@ -101,6 +107,7 @@ impl Showcase {
             content: Content::with_text(SOURCE),
             theme: Theme::SolarizedLight,
             word_wrap: true,
+            show_hints: true,
             // The shapes a squiggle has to take: a token mid-line, a range long enough to
             // cross a wrap, a blank line, an "insert here" of no width at all, and a
             // multibyte cluster. The positions are byte offsets into `SOURCE`, so editing
@@ -134,6 +141,9 @@ impl Showcase {
             Message::WordWrapToggled(word_wrap) => {
                 self.word_wrap = word_wrap;
             }
+            Message::HintsToggled(show_hints) => {
+                self.show_hints = show_hints;
+            }
             Message::ThemeSelected(theme) => {
                 self.theme = theme;
             }
@@ -145,6 +155,9 @@ impl Showcase {
             toggler(self.word_wrap)
                 .label("Word Wrap")
                 .on_toggle(Message::WordWrapToggled),
+            toggler(self.show_hints)
+                .label("Inlay Hints")
+                .on_toggle(Message::HintsToggled),
             space::horizontal(),
             pick_list(Some(&self.theme), Theme::ALL, Theme::to_string)
                 .on_select(Message::ThemeSelected),
@@ -170,7 +183,10 @@ impl Showcase {
                 .placeholder("Type something here...")
                 .on_action(Message::Edit)
                 .diagnostics(&self.diagnostics)
-                .inlay_hints(&self.hints)
+                // Hiding a hint is passing none, not asking the widget to stop drawing
+                // the ones it has: what the editor is given is the whole of what it
+                // knows about.
+                .inlay_hints(if self.show_hints { &self.hints } else { &[] })
                 .gutter(gutter::Style {
                     // The editor's own text color, dimmed, so the eye reads the code first
                     // and the numbers still follow the theme.
