@@ -120,7 +120,7 @@ impl Showcase {
                 at(37, 20..26, diagnostic::Severity::Error),
             ],
             // What a language server sends back, and the shapes a hint has to survive:
-            // one inside a line, where it paints over the code and is expected to; one
+            // one inside a line, where its chip hides the code and is meant to; one
             // past the end of a short line, in the empty space; one deep inside the long
             // line, so it rides a continuation row once word wrap is on; and one in a
             // script the font has to fall back for.

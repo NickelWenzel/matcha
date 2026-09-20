@@ -261,10 +261,14 @@ where
     /// application state, replaced wholesale on every round-trip with whatever
     /// produces them.
     ///
-    /// They are *overlays*, not text. A hint paints over whatever is beneath it
-    /// and never reserves room, reflows a line, moves the caret, or takes part
-    /// in hit-testing — so a label anchored inside a line overlaps the code
-    /// there, and a click through it lands on the character underneath.
+    /// They are *overlays*, not text. Each label rides on an opaque chip drawn
+    /// in a layer above the code, so a hint anchored inside a line hides the
+    /// code there — which is what makes it legible, and why hints read best
+    /// shown momentarily. This is also the control for showing them: pass
+    /// `&[]`, from a toggle or a held key, and the editor draws none. A chip
+    /// still reserves no room, reflows no line, moves no caret, and takes no
+    /// part in hit-testing, so a click through one lands on the character
+    /// underneath.
     pub fn inlay_hints(mut self, hints: &'a [inlay::Hint<'a>]) -> Self {
         self.inlay_hints = hints;
         self
@@ -719,10 +723,11 @@ where
 
         // Decorations are placed against the shaped buffer, so they can only be drawn after
         // `highlight` above: `layout_runs` stops at the first unshaped line, and shaping the
-        // visible window is what `highlight` finishes. Call order does not decide z-order —
-        // both backends draw every quad in a layer before any of its text — so these waves
-        // land beneath the glyphs they mark however late they are issued, which is where an
-        // underline belongs.
+        // visible window is what `highlight` finishes. Within a layer, call order does not
+        // decide z-order — both backends draw every quad in a layer before any of its
+        // text — so these waves land beneath the glyphs they mark however late they are
+        // issued, which is where an underline belongs. Getting *above* the glyphs takes a
+        // layer of its own, which is what the hint pass below pushes one for.
         for diagnostic in self.diagnostics {
             let style = (self.diagnostic_style)(diagnostic.severity);
 

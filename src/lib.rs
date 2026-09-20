@@ -1,5 +1,5 @@
 //! A code editor widget for [iced], with diagnostic underlines, inlay-hint
-//! overlays, and a line-number gutter.
+//! chips, and a line-number gutter.
 //!
 //! [`CodeEditor`] edits, selects, wraps, scrolls, and highlights exactly as
 //! `iced::widget::TextEditor` does. What it adds is that it owns its shaped
@@ -79,14 +79,25 @@
 //! about the protocol — it takes positions in the units the text is stored in
 //! and leaves the wire format to whatever speaks it.
 //!
-//! # Inlay hints are overlays
+//! # Inlay hints are opaque overlays
 //!
-//! A [`Hint`](decoration::inlay::Hint) is drawn *on top of* the editor and
-//! changes nothing underneath it. It reserves no room, reflows no line, moves
-//! no caret, and takes no part in hit-testing — so a label anchored inside a
-//! line paints over the code there, and a click through it lands on the
-//! character beneath. Text that pushes code aside instead is *virtual text*,
-//! which is a different feature and not this one.
+//! A [`Hint`](decoration::inlay::Hint) is a label on a filled, outlined chip,
+//! drawn in a layer above the text — so a hint anchored inside a line hides the
+//! code there rather than tangling with it, which is what keeps both legible.
+//! Hints read best shown momentarily for that reason.
+//!
+//! Showing them is the application's call, and what it hands
+//! [`inlay_hints`](CodeEditor::inlay_hints) is the whole of the control:
+//! `&hints` to show them, `&[]` to show none. Binding that choice to a held
+//! modifier is how the momentary peek is built. The widget offers no reveal of
+//! its own, because it would duplicate state the application already has and
+//! pick a key on its behalf.
+//!
+//! Hiding code is the only thing a chip does to it. Nothing reserves room,
+//! reflows a line, moves the caret, or takes part in hit-testing, so a click
+//! through a chip lands on the character beneath it exactly as if the chip were
+//! not there. Text that pushes code aside instead is *virtual text*, which is a
+//! different feature and not this one.
 //!
 //! # Stale positions are ignored, never fatal
 //!

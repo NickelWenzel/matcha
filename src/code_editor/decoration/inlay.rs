@@ -1,4 +1,4 @@
-//! Labels drawn among the text without displacing it.
+//! Labels on opaque chips, laid over the text without moving any of it.
 
 use std::borrow::Cow;
 
@@ -12,7 +12,8 @@ use crate::Position;
 /// beside it.
 const SIZE_SCALE: f32 = 0.75;
 
-/// A text overlay anchored to a position, drawn without affecting layout.
+/// A label anchored to a position, drawn on a chip that hides the code beneath
+/// it and changes nothing about how that code is laid out.
 #[derive(Debug, Clone)]
 pub struct Hint<'a> {
     /// Where to anchor the label.
@@ -21,14 +22,24 @@ pub struct Hint<'a> {
     pub label: Cow<'a, str>,
 }
 
-/// How to draw an inlay hint.
+/// How to draw an inlay hint: a label on a filled, outlined chip that hides the
+/// code beneath it.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Style {
     /// The label color.
     pub color: Color,
     /// What the chip behind the label is filled with.
+    ///
+    /// Opacity is the point. The chip is what makes a label legible inside a
+    /// line of code, so a fill the code shows through undoes the whole thing.
     pub background: Background,
     /// The outline drawn around the chip, inside its bounds.
+    ///
+    /// A quad mixes its border into its fill rather than compositing it over,
+    /// so the outermost pixel of a chip is only as opaque as this color. That
+    /// costs a hairline of the occlusion, which is a fair trade for an edge:
+    /// rounded corners are anti-aliased whether or not anything is drawn on
+    /// them, so the boundary is soft either way.
     pub border: Border,
     /// Label size as a fraction of the editor's text size.
     pub size_scale: f32,
@@ -58,11 +69,11 @@ impl Style {
             color,
             background,
             // Scaled well down, because a frame at the label's full strength is read
-            // before the label is, and the label is the point. It costs a hairline of
-            // the occlusion: a quad mixes its border *into* its fill rather than over
-            // it, so the outermost pixel of a chip is only as opaque as this. Rounded
-            // and one pixel wide like the editor's own frame, so that a chip looks like
-            // part of the widget it sits in rather than something pasted over it.
+            // before the label is and the label is the point — and because the border
+            // is mixed into the fill rather than laid over it, so the fainter it is the
+            // less of the occlusion it costs. Rounded and one pixel wide like the
+            // editor's own frame, so that a chip looks like part of the widget it sits
+            // in rather than something pasted over it.
             border: Border {
                 color: color.scale_alpha(0.4),
                 width: 1.0,

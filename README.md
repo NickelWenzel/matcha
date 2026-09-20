@@ -6,14 +6,14 @@ It edits, selects, wraps, scrolls, and highlights exactly as `iced::widget::Text
 adds the three things a code editor needs and the stock widget cannot draw:
 
 - **diagnostic squiggles** — wavy underlines over a range of text, one per severity,
-- **inlay hints** — small labels drawn among the code without displacing any of it,
+- **inlay hints** — small labels on opaque chips, laid over the code without moving any of it,
 - **a line-number gutter** — folded into the editor's own padding, so hit-testing stays exact.
 
 It is a single library crate built on public iced APIs. No fork, no patch, and no dependency
 other than iced itself.
 
 To see it, run the showcase, which stresses wrapping, multibyte shaping, scrolling, and all three
-decorations at once:
+decorations at once, and carries a toggle for the hints:
 
 ```sh
 cargo run --example showcase
@@ -83,8 +83,11 @@ Three things to know before wiring a language server up to it:
 
 1. **Positions are UTF-8 byte indices** into a line — not UTF-16 code units, and not columns.
    Converting from LSP's UTF-16 is your job; matcha has no `lsp-types` dependency.
-2. **Inlay hints are overlays.** They may paint over source text, and they never change layout,
-   wrapping, hit-testing, or the caret.
+2. **Inlay hints are opaque overlays.** Each label sits on a filled, outlined chip drawn in a
+   layer above the text, so a hint inside a line hides the code there — which is why hints read
+   best shown momentarily. Showing them is yours to decide: `&hints` or `&[]`, from a toggle or
+   a held key, is the whole of the control. They never change layout, wrapping, hit-testing, or
+   the caret.
 3. **Stale positions are ignored, never fatal.** A decoration naming a line the buffer no longer
    has is silently not drawn, so decorations can be replaced wholesale on every round-trip
    without being checked first.
@@ -97,8 +100,6 @@ Three things to know before wiring a language server up to it:
 - **Center and right text alignment.** `text::Alignment::Default` only: the fork history of
   `Buffer::hit` is evidence enough that alignment makes hit-testing subtle, and the decoration
   geometry assumes a left origin throughout.
-- **Opaque chips behind inlay hints.** Both backends draw every quad in a layer before any of its
-  text, so a background quad would land beneath the code rather than behind the label.
 
 ## License
 

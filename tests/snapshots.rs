@@ -92,8 +92,8 @@ fn diagnostics() -> Vec<diagnostic::Diagnostic> {
     ]
 }
 
-/// A type after `answer`, where it paints over the code, and a return type on
-/// the blank line, where it does not.
+/// A type after `answer`, where its chip hides the code, and a return type on
+/// the blank line, where there is none to hide.
 fn hints() -> Vec<inlay::Hint<'static>> {
     let hint = |line, index, label: &'static str| inlay::Hint {
         position: Position { line, index },
@@ -120,7 +120,7 @@ fn squiggles_run_under_the_glyphs_they_mark() -> Result<(), Error> {
 
 #[test]
 #[ignore = "records a baseline on its first run; see this file's docs"]
-fn hints_sit_beside_the_code_they_annotate() -> Result<(), Error> {
+fn hints_are_drawn_on_opaque_chips() -> Result<(), Error> {
     let content = Content::with_text(SOURCE);
     let hints = hints();
     let mut ui = interface(&content, None, &[], &hints);
