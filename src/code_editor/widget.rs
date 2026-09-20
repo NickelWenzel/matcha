@@ -113,6 +113,8 @@ struct State<Parser: text::Parser, Paragraph: text::Paragraph> {
     last_theme: RefCell<Option<String>>,
     // The gutter's width is needed in `draw`, which only ever gets a shared `&Tree`.
     widest_number: RefCell<paragraph::Plain<Paragraph>>,
+    // One per hint, so a chip can be sized to the label it hides.
+    labels: RefCell<Vec<paragraph::Plain<Paragraph>>>,
 }
 
 impl<'a, Message, Theme, Renderer> CodeEditor<'a, parser::PlainText, Message, Theme, Renderer>
@@ -270,8 +272,9 @@ where
 
     /// Sets how the hints are drawn.
     ///
-    /// Defaults to [`inlay::Style::new`] over the color the theme dims text to
-    /// and the editor's own text size.
+    /// Defaults to [`inlay::Style::new`] over the color the theme dims text to,
+    /// the background the editor itself is filled with, and the editor's own
+    /// text size.
     pub fn inlay_style(mut self, style: inlay::Style) -> Self {
         self.inlay_style = Some(style);
         self
@@ -416,6 +419,7 @@ where
             parser_settings: self.parser_settings.clone(),
             last_theme: RefCell::new(None),
             widest_number: RefCell::new(paragraph::Plain::default()),
+            labels: RefCell::new(Vec::new()),
         })
     }
 
@@ -738,7 +742,7 @@ where
         let text_size = self.text_size.unwrap_or_else(|| renderer.text_size());
         let inlay_style = self
             .inlay_style
-            .unwrap_or_else(|| inlay::Style::new(style.placeholder, text_size));
+            .unwrap_or_else(|| inlay::Style::new(style.placeholder, style.background, text_size));
 
         // Resolved against the code's size and not the label's: a relative line height is a
         // multiple of the text it belongs to, and shrinking the label's line box with the
@@ -768,26 +772,105 @@ where
             hint_factor: renderer.hint_factor(),
         };
 
-        // Hints are overlays. Nothing above this loop knows they exist: they reserve no room,
-        // reflow nothing, and are not hit-tested, so a label anchored inside a line simply
-        // paints over the code there. Text is drawn after every quad in a layer, so a label
-        // lands above the squiggles without any ordering work — and an opaque chip behind one
-        // would need a layer push, which is why there is none.
-        for hint in self.inlay_hints {
-            // An anchor the buffer cannot place — scrolled out of view, or past the end of
-            // its line — is simply not drawn.
+        let mut labels = state.labels.borrow_mut();
+
+        // Keyed by position rather than by content: a reordered list re-shapes a few
+        // labels, which is cheap and far simpler than keying by what they say.
+        labels.resize_with(self.inlay_hints.len(), Default::default);
+
+        // Measure and anchor before placing anything. A chip is exactly as wide as the
+        // text it hides, which means shaping the label first — and a hint the buffer
+        // cannot place, scrolled out of view or past the end of its line, is simply
+        // absent from here on.
+        let mut placed: Vec<(usize, Point, Size)> = Vec::new();
+
+        for (index, hint) in self.inlay_hints.iter().enumerate() {
             let Some(anchor) =
                 geometry::position_anchor(content.buffer(), hint_factor, hint.position)
             else {
                 continue;
             };
 
-            renderer.fill_text(
-                label.with_content(hint.label.to_string()),
-                anchor + translation + inlay_style.offset,
-                inlay_style.color,
-                clip_bounds,
-            );
+            let _ = labels[index].update(label.with_content(hint.label.as_ref()));
+
+            placed.push((index, anchor, labels[index].min_bounds()));
+        }
+
+        // Row first, then column. Two anchors on one row are two copies of a single
+        // `line_top` rather than two measurements, so comparing them exactly is sound.
+        placed.sort_by(|(_, a, _), (_, b, _)| a.y.total_cmp(&b.y).then(a.x.total_cmp(&b.x)));
+
+        // Kept in text-origin space, like the squiggles above; `translation` is added at
+        // draw time.
+        let mut chips: Vec<(Rectangle, Point, usize)> = Vec::new();
+        let mut row = f32::NAN;
+        let mut right = f32::NEG_INFINITY;
+
+        for (index, anchor, size) in placed {
+            // `NAN` compares equal to nothing, so the first hint always opens a row.
+            if anchor.y != row {
+                row = anchor.y;
+                right = f32::NEG_INFINITY;
+            }
+
+            // Two opaque boxes overlapping is far worse than two labels overlapping, so a
+            // chip is nudged right until it clears the one before it on its row. The
+            // clamp is on the box and the label is derived from it: clamping the label
+            // and subtracting the padding would let each box start `padding.left` inside
+            // its predecessor, which is the overlap this exists to prevent. A chip pushed
+            // past the clip renders nothing, so the rule degenerates at the tail of a
+            // long cascade rather than being strictly better than dropping.
+            let left = (anchor.x + inlay_style.offset.x - inlay_style.padding.left).max(right);
+
+            let chip = Rectangle {
+                x: left,
+                y: anchor.y + inlay_style.offset.y - inlay_style.padding.top,
+                width: size.width + inlay_style.padding.x(),
+                height: size.height + inlay_style.padding.y(),
+            };
+
+            right = chip.x + chip.width;
+
+            chips.push((
+                chip,
+                Point::new(
+                    left + inlay_style.padding.left,
+                    anchor.y + inlay_style.offset.y,
+                ),
+                index,
+            ));
+        }
+
+        // Nothing to show means no layer: an empty batch still costs one. The guard is on
+        // the chips and not on the hints because a hint that resolves to no anchor
+        // produces neither.
+        if !chips.is_empty() {
+            // Hints are opaque overlays. Nothing above this knows they exist — they
+            // reserve no room, reflow nothing, and are not hit-tested — so a chip simply
+            // hides the code it is anchored inside, which is what makes a label legible
+            // there. It takes a layer to do it: within one layer both backends draw every
+            // quad before any text, so a chip issued here would land *beneath* the code
+            // and hide nothing. A new layer composites entirely above the one before it.
+            // One for the whole pass, not one per hint: a layer is a separate primitive
+            // batch.
+            renderer.with_layer(clip_bounds, |renderer| {
+                for (chip, position, index) in chips {
+                    renderer.fill_quad(
+                        renderer::Quad {
+                            bounds: chip + translation,
+                            ..renderer::Quad::default()
+                        },
+                        inlay_style.background,
+                    );
+
+                    renderer.fill_text(
+                        label.with_content(self.inlay_hints[index].label.to_string()),
+                        position + translation,
+                        inlay_style.color,
+                        clip_bounds,
+                    );
+                }
+            });
         }
     }
 
@@ -895,12 +978,14 @@ mod tests {
     /// own smaller size instead of the code's comes out a different box.
     const LINE_HEIGHT_SCALE: f32 = 1.5;
 
-    /// A hint look with a color, a scale, and an offset no default would
-    /// produce, so an assertion against it cannot pass by accident.
+    /// A hint look whose every field is one no default would produce, so an
+    /// assertion against it cannot pass by accident.
     const HINT: inlay::Style = inlay::Style {
         color: Color::from_rgb(1.0, 0.0, 1.0),
+        background: Background::Color(Color::from_rgb(0.0, 1.0, 0.0)),
         size_scale: 0.5,
         offset: Vector::new(3.0, -7.0),
+        padding: Padding::new(2.0),
     };
 
     /// The viewport the recorded draws below happen in.
@@ -1278,17 +1363,28 @@ mod tests {
         position: Point,
         color: Color,
         clip_bounds: Rectangle,
+        layer: usize,
     }
 
     /// A renderer that records what it is asked to fill and draws nothing.
     ///
-    /// Squiggles are quads and hints are text, and a `Simulator` hands back no
-    /// pixels a test can read, so the draw calls themselves are the only place
-    /// to look.
+    /// Squiggles are quads, a hint is a quad and a label, and a `Simulator`
+    /// hands back no pixels a test can read, so the draw calls themselves are
+    /// the only place to look.
+    ///
+    /// Every call carries the layer it landed in, because a chip drawn in the
+    /// base layer paints beneath the code and hides nothing — and looks exactly
+    /// like a correct one from here.
     #[derive(Debug, Default)]
     struct Probe {
-        quads: Vec<(renderer::Quad, Background)>,
+        quads: Vec<(renderer::Quad, Background, usize)>,
         texts: Vec<Filled>,
+        // Where the editor drew its own text. A stub would leave the code recorded
+        // nowhere, and "the chip is above the code" is then inexpressible.
+        editor: Vec<(Point, Color, usize)>,
+        // How deep the recorder is now, and how many layers it has been asked to start.
+        layer: usize,
+        layers: usize,
     }
 
     impl Probe {
@@ -1299,12 +1395,34 @@ mod tests {
         fn squiggles(&self, color: Color) -> Vec<renderer::Quad> {
             self.quads
                 .iter()
-                .filter(|(_, background)| *background == Background::Color(color))
-                .map(|(quad, _)| *quad)
+                .filter(|(_, background, _)| *background == Background::Color(color))
+                .map(|(quad, _, _)| *quad)
                 .collect()
         }
 
-        /// The text filled, in the order it was issued.
+        /// The quads drawn deeper than the editor's own text, in the order they
+        /// were issued.
+        ///
+        /// A chip's default fill is the very [`Background`] the widget's frame
+        /// quad is painted with, so how deep it landed is the only thing that
+        /// tells the two apart.
+        fn chips(&self) -> Vec<(renderer::Quad, Background)> {
+            let code = self
+                .editor
+                .iter()
+                .map(|(_, _, layer)| *layer)
+                .max()
+                .expect("the editor should have drawn its own text");
+
+            self.quads
+                .iter()
+                .filter(|(_, _, layer)| *layer > code)
+                .map(|(quad, background, _)| (*quad, *background))
+                .collect()
+        }
+
+        /// The text filled, in the order it was issued — which for hints is
+        /// left to right along each row, not the order they were supplied in.
         fn labels(&self) -> Vec<&str> {
             self.texts
                 .iter()
@@ -1314,16 +1432,23 @@ mod tests {
     }
 
     impl renderer::Renderer for Probe {
-        fn start_layer(&mut self, _bounds: Rectangle) {}
+        fn start_layer(&mut self, _bounds: Rectangle) {
+            self.layer += 1;
+            self.layers += 1;
+        }
 
-        fn end_layer(&mut self) {}
+        fn end_layer(&mut self) {
+            // A bare `-= 1` panics in debug on an unbalanced pop, which would report a
+            // renderer's bug as a crash in whatever test happened to be running.
+            self.layer = self.layer.saturating_sub(1);
+        }
 
         fn start_transformation(&mut self, _transformation: Transformation) {}
 
         fn end_transformation(&mut self) {}
 
         fn fill_quad(&mut self, quad: renderer::Quad, background: impl Into<Background>) {
-            self.quads.push((quad, background.into()));
+            self.quads.push((quad, background.into(), self.layer));
         }
 
         fn allocate_image(
@@ -1373,10 +1498,11 @@ mod tests {
         fn fill_editor(
             &mut self,
             _editor: &Self::Editor,
-            _position: Point,
-            _color: Color,
+            position: Point,
+            color: Color,
             _clip_bounds: Rectangle,
         ) {
+            self.editor.push((position, color, self.layer));
         }
 
         fn fill_text(
@@ -1391,6 +1517,7 @@ mod tests {
                 position,
                 color,
                 clip_bounds,
+                layer: self.layer,
             });
         }
     }
@@ -2024,7 +2151,7 @@ mod tests {
 
         // `record` draws the light theme, and nothing has written a status yet.
         let style = text_editor::default(&iced::Theme::Light, text_editor::Status::Active);
-        let expected = inlay::Style::new(style.placeholder, Pixels(TEXT_SIZE));
+        let expected = inlay::Style::new(style.placeholder, style.background, Pixels(TEXT_SIZE));
 
         let [label] = probe.texts.as_slice() else {
             panic!("one hint should be drawn once");
@@ -2050,7 +2177,7 @@ mod tests {
     }
 
     #[test]
-    fn a_hint_is_drawn_as_text_and_never_as_a_chip_behind_it() {
+    fn a_hint_is_drawn_on_an_opaque_chip_above_the_code() {
         let content = Content::with_text("alpha bravo");
         let hints = [hint(0, 6, ": usize")];
 
@@ -2060,11 +2187,277 @@ mod tests {
         assert!(bare.texts.is_empty());
         assert_eq!(annotated.labels(), [": usize"]);
 
-        // A quad behind the label would land *beneath* the source text, since both
-        // backends draw every quad in a layer before any of its text, so the code would
-        // show through it. Doing it properly needs a layer push, which is why there is no
-        // chip at all.
-        assert_eq!(annotated.quads.len(), bare.quads.len());
+        // The hint costs exactly one quad, which is its chip.
+        assert_eq!(annotated.quads.len(), bare.quads.len() + 1);
+
+        let [(_, _, code)] = annotated.editor.as_slice() else {
+            panic!("the editor should fill its own text exactly once");
+        };
+        let [label] = annotated.texts.as_slice() else {
+            panic!("one hint should be drawn once");
+        };
+        let [(chip, _, chip_layer)] = annotated.quads[bare.quads.len()..] else {
+            panic!("the hint should add exactly one quad");
+        };
+
+        // Within one layer both backends draw every quad before any text, so a chip
+        // issued beside the code would paint underneath it and the code would show
+        // through. Nothing about the call itself says which happened — only how deep it
+        // landed does.
+        assert!(
+            chip_layer > *code,
+            "a chip in the editor's own layer paints beneath the code and hides nothing"
+        );
+
+        // The label rides on the chip rather than being left behind in the base layer,
+        // where the code would paint over it in turn.
+        assert_eq!(label.layer, chip_layer);
+
+        // And it is under the label rather than merely somewhere nearby.
+        assert!(chip.bounds.contains(label.position));
+    }
+
+    #[test]
+    fn a_chip_covers_the_whole_row_it_annotates() {
+        let content = Content::with_text("alpha bravo\ncharlie delta");
+        let hints = [hint(1, 4, ": usize")];
+
+        let probe = overlaid(&content, &hints, text::Wrapping::None);
+
+        let chips = probe.chips();
+        let [(chip, _)] = chips.as_slice() else {
+            panic!("one hint should draw one chip");
+        };
+
+        let rows = rows(&content);
+        let (_, top) = rows[1];
+        let line_height = TEXT_SIZE * LINE_HEIGHT_SCALE;
+
+        assert_eq!(rows.len(), 2, "both lines have to be on screen");
+        assert!(top > 0.0, "the annotated row must not be the first one");
+
+        // The whole premise: the code underneath is hidden rather than blended with. A
+        // chip raised off its row leaves the descenders showing along the bottom and
+        // clips the row above, which is why the default offset is level with the row and
+        // the breathing room is horizontal.
+        assert!(
+            chip.bounds.y <= top && chip.bounds.y + chip.bounds.height >= top + line_height,
+            "a chip spanning {}..{} does not cover the row at {top}..{}",
+            chip.bounds.y,
+            chip.bounds.y + chip.bounds.height,
+            top + line_height
+        );
+    }
+
+    #[test]
+    fn a_chip_is_as_wide_as_the_label_it_hides() {
+        let content = Content::with_text("alpha bravo");
+
+        let chip = |text: &str, size_scale: f32, padding: Padding| {
+            let hints = [hint(0, 6, text)];
+
+            let probe = record(
+                code_editor(&content)
+                    .padding(0.0)
+                    .size(TEXT_SIZE)
+                    .font(Font::MONOSPACE)
+                    .wrapping(text::Wrapping::None)
+                    .on_action(Message::Edit)
+                    .inlay_hints(&hints)
+                    .inlay_style(inlay::Style {
+                        size_scale,
+                        padding,
+                        ..HINT
+                    }),
+            );
+
+            let chips = probe.chips();
+            let [(chip, _)] = chips.as_slice() else {
+                panic!("one hint should draw one chip");
+            };
+
+            chip.bounds
+        };
+
+        let short = chip(": u8", HINT.size_scale, Padding::ZERO);
+        let long = chip(": a much longer annotation", HINT.size_scale, Padding::ZERO);
+
+        // Sized to the label rather than to anything constant.
+        assert!(short.width > 0.0);
+        assert!(long.width > short.width);
+
+        // Sized to the *shaped* label: doubling the size the glyphs are drawn at doubles
+        // the room they take, so a chip measured against the code's size instead of the
+        // label's would not move.
+        let doubled = chip(
+            ": a much longer annotation",
+            HINT.size_scale * 2.0,
+            Padding::ZERO,
+        );
+
+        assert!(
+            (doubled.width - 2.0 * long.width).abs() < 0.01 * long.width,
+            "a label at twice the size measured {} against {}",
+            doubled.width,
+            long.width
+        );
+
+        // And the padding is added on top of the measurement, once per side.
+        let padded = chip(
+            ": a much longer annotation",
+            HINT.size_scale,
+            Padding::new(3.0),
+        );
+
+        assert_eq!(padded.width, long.width + 6.0);
+        assert_eq!(padded.height, long.height + 6.0);
+    }
+
+    #[test]
+    fn two_hints_on_one_row_do_not_overlap() {
+        let content = Content::with_text("alpha bravo charlie delta");
+
+        // Supplied right to left, so the row has to be laid out in its own order rather
+        // than in the order the hints happened to arrive.
+        let hints = [hint(0, 11, ": second"), hint(0, 5, ": a long first label")];
+
+        let probe = overlaid(&content, &hints, text::Wrapping::None);
+
+        assert_eq!(
+            probe.labels(),
+            [": a long first label", ": second"],
+            "chips are placed left to right along the row"
+        );
+
+        let chips = probe.chips();
+        let [(first, _), (second, _)] = chips.as_slice() else {
+            panic!("both hints should draw a chip");
+        };
+
+        assert_eq!(
+            first.bounds.y, second.bounds.y,
+            "both hints have to share a row for this to test anything"
+        );
+
+        let anchor = |index| {
+            let editor = content.0.borrow();
+            let hint_factor = editor.hint_factor().unwrap_or(1.0);
+
+            geometry::position_anchor(editor.buffer(), hint_factor, Position { line: 0, index })
+                .expect("the first line is on screen")
+        };
+
+        // Left to right in anchor order, and the second anchor falls *inside* the first
+        // chip, so the second box can only clear it by shifting.
+        assert!(anchor(5).x < anchor(11).x);
+        assert!(
+            anchor(11).x < first.bounds.x + first.bounds.width,
+            "the two chips have to collide for this to test anything"
+        );
+
+        // Not even by `padding.left`, which is what clamping the label instead of the box
+        // would cost.
+        assert!(
+            second.bounds.x >= first.bounds.x + first.bounds.width,
+            "a chip at {} overlaps the one ending at {}",
+            second.bounds.x,
+            first.bounds.x + first.bounds.width
+        );
+    }
+
+    #[test]
+    fn two_hints_on_different_rows_both_sit_at_their_anchors() {
+        let content = Content::with_text("alpha bravo\ncharlie delta");
+        let hints = [hint(0, 5, ": a long first label"), hint(1, 0, ": second")];
+
+        let probe = overlaid(&content, &hints, text::Wrapping::None);
+
+        let chips = probe.chips();
+        let [(first, _), (second, _)] = chips.as_slice() else {
+            panic!("both hints should draw a chip");
+        };
+
+        assert_ne!(first.bounds.y, second.bounds.y, "the hints are on two rows");
+
+        let style = text_editor::default(&iced::Theme::Light, text_editor::Status::Active);
+        let expected = inlay::Style::new(style.placeholder, style.background, Pixels(TEXT_SIZE));
+
+        let anchor = {
+            let editor = content.0.borrow();
+            let hint_factor = editor.hint_factor().unwrap_or(1.0);
+
+            geometry::position_anchor(editor.buffer(), hint_factor, Position { line: 1, index: 0 })
+                .expect("the second line is on screen")
+        };
+
+        let unshifted = anchor.x + expected.offset.x - expected.padding.left;
+
+        assert!(
+            first.bounds.x + first.bounds.width > unshifted,
+            "the rows have to be able to collide for this to test anything"
+        );
+
+        // The running right edge resets at every row, so a chip low on the screen is
+        // never pushed aside by one above it.
+        assert_eq!(second.bounds.x, unshifted);
+    }
+
+    #[test]
+    fn a_hint_without_a_style_still_gets_an_opaque_chip() {
+        let content = Content::with_text("alpha bravo");
+        let hints = [hint(0, 6, ": usize")];
+
+        let probe = overlaid(&content, &hints, text::Wrapping::None);
+
+        let chips = probe.chips();
+        let [(_, fill)] = chips.as_slice() else {
+            panic!("one hint should draw one chip");
+        };
+
+        // `record` draws the light theme, and nothing has written a status yet.
+        let style = text_editor::default(&iced::Theme::Light, text_editor::Status::Active);
+
+        // The editor's own background, so a chip reads as a hole punched in the code
+        // rather than as a badge stuck over it.
+        assert_eq!(*fill, style.background);
+
+        let Background::Color(color) = fill else {
+            panic!("the default fill is a solid color");
+        };
+
+        assert_eq!(
+            color.a, 1.0,
+            "a chip that lets the code through hides nothing"
+        );
+    }
+
+    #[test]
+    fn an_editor_without_hints_pushes_no_layer_and_draws_no_chip() {
+        let content = Content::with_text("alpha bravo");
+
+        let bare = overlaid(&content, &[], text::Wrapping::None);
+
+        assert_eq!(bare.layers, 0, "an empty hint pass must not cost a layer");
+        assert!(bare.chips().is_empty());
+
+        // A hint the buffer cannot place produces no chip either, which is why the guard
+        // is on the chips rather than on the hints.
+        let nowhere = overlaid(&content, &[hint(9, 0, ": nowhere")], text::Wrapping::None);
+
+        assert_eq!(nowhere.layers, 0);
+        assert!(nowhere.chips().is_empty());
+
+        let annotated = overlaid(
+            &content,
+            &[hint(0, 2, ": a"), hint(0, 8, ": b")],
+            text::Wrapping::None,
+        );
+
+        assert_eq!(annotated.chips().len(), 2);
+        assert_eq!(
+            annotated.layers, 1,
+            "one layer for the whole pass, not one per hint"
+        );
     }
 
     #[test]
@@ -2102,10 +2495,13 @@ mod tests {
 
         // The end of a line is a place; two bytes further along is not, and neither is a
         // line the buffer does not have. Both resolve to no anchor and are dropped.
-        assert_eq!(
-            overlaid(&content, &hints, text::Wrapping::None).labels(),
-            ["→ end"]
-        );
+        let probe = overlaid(&content, &hints, text::Wrapping::None);
+
+        assert_eq!(probe.labels(), ["→ end"]);
+
+        // The two that never placed cost neither a chip nor a layer of their own.
+        assert_eq!(probe.chips().len(), 1);
+        assert_eq!(probe.layers, 1);
     }
 
     #[test]
@@ -2155,7 +2551,8 @@ mod tests {
         };
 
         let style = text_editor::default(&iced::Theme::Light, text_editor::Status::Active);
-        let offset = inlay::Style::new(style.placeholder, Pixels(TEXT_SIZE)).offset;
+        let offset =
+            inlay::Style::new(style.placeholder, style.background, Pixels(TEXT_SIZE)).offset;
 
         // `Buffer::cursor_position` ignores `Cursor::affinity`, so of the two rows this
         // byte belongs to it takes the earlier — and the hint lands at the far right edge

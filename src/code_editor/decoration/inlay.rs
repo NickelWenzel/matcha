@@ -2,7 +2,7 @@
 
 use std::borrow::Cow;
 
-use iced::{Color, Pixels, Vector};
+use iced::{Background, Color, Padding, Pixels, Vector};
 
 use crate::Position;
 
@@ -26,30 +26,41 @@ pub struct Hint<'a> {
 pub struct Style {
     /// The label color.
     pub color: Color,
+    /// What the chip behind the label is filled with.
+    pub background: Background,
     /// Label size as a fraction of the editor's text size.
     pub size_scale: f32,
     /// Offset from the anchor, in logical pixels.
     pub offset: Vector,
+    /// Space between the label and the edge of its chip.
+    pub padding: Padding,
 }
 
 impl Style {
     /// The look a hint gets when no `inlay_style` is given.
     ///
-    /// The color is the caller's because a hint has to read as *not code*
-    /// against whatever the theme paints behind it, which no fixed color does
-    /// for every theme; the widget passes the color its theme dims text to. The
-    /// text size is the code's, which the offset is a fraction of so that the
-    /// nudge keeps its proportions at every size.
-    pub fn new(color: Color, text_size: Pixels) -> Self {
+    /// Both colors are the caller's because a hint has to read as *not code*
+    /// against whatever the theme paints behind it, which no fixed pair does
+    /// for every theme; the widget passes the color its theme dims text to and
+    /// the background the editor itself is filled with, so that a chip reads as
+    /// a hole punched in the code rather than as a badge stuck over it. The
+    /// text size is the code's, which the padding is a fraction of so that the
+    /// chip keeps its proportions at every size.
+    pub fn new(color: Color, background: Background, text_size: Pixels) -> Self {
         let size = text_size * SIZE_SCALE;
 
         Self {
             color,
+            background,
             size_scale: SIZE_SCALE,
             // Clear of the anchor to the right, so the label does not start on top of the
-            // glyph it annotates, and raised, so it reads as a note about the line rather
-            // than as more of it.
-            offset: Vector::new(2.0, -size.0 * 0.25),
+            // glyph it annotates — and level with the row, because a chip stands exactly
+            // one row tall and raising it would leave the descenders it has to hide
+            // showing beneath.
+            offset: Vector::new(2.0, 0.0),
+            // Room either side of the label, so it does not touch the code it interrupts,
+            // and none above or below, where the chip already covers its row exactly.
+            padding: Padding::from([0.0, size.0 * 0.25]),
         }
     }
 }
@@ -58,9 +69,18 @@ impl Style {
 mod tests {
     use super::*;
 
+    /// The default look at `text_size`, over a fill no theme would produce.
+    fn look(text_size: f32) -> Style {
+        Style::new(
+            Color::BLACK,
+            Background::Color(Color::WHITE),
+            Pixels(text_size),
+        )
+    }
+
     #[test]
     fn the_default_look_nudges_a_label_clear_of_the_glyph_it_annotates() {
-        let style = Style::new(Color::BLACK, Pixels(16.0));
+        let style = look(16.0);
 
         assert!(
             style.size_scale < 1.0,
@@ -68,16 +88,28 @@ mod tests {
         );
 
         // Right of the anchor, so the label does not start on top of the glyph it
-        // annotates, and up, so it does not sit in line with the code.
+        // annotates.
         assert!(style.offset.x > 0.0);
-        assert!(style.offset.y < 0.0);
+
+        // Level with it, though. A chip is exactly as tall as the row it covers, so
+        // raising it would uncover the bottom of that row — where the descenders are —
+        // while clipping the row above.
+        assert_eq!(style.offset.y, 0.0);
     }
 
     #[test]
-    fn the_default_offset_keeps_its_proportions_at_every_text_size() {
-        let small = Style::new(Color::BLACK, Pixels(10.0));
-        let large = Style::new(Color::BLACK, Pixels(20.0));
+    fn the_default_padding_keeps_its_proportions_at_every_text_size() {
+        let small = look(10.0);
+        let large = look(20.0);
 
-        assert_eq!(large.offset.y, small.offset.y * 2.0);
+        assert!(
+            small.padding.x() > 0.0,
+            "a label needs room either side of it, or the chip cuts into its glyphs"
+        );
+        assert_eq!(large.padding.x(), small.padding.x() * 2.0);
+
+        // None above or below, for the same reason the offset is level with the row.
+        assert_eq!(small.padding.y(), 0.0);
+        assert_eq!(large.padding.y(), 0.0);
     }
 }
