@@ -1,6 +1,6 @@
 # Session handoff — opaque inlay-hint chips
 
-*Updated 2026-09-20. Status: Phase 1 done; Phase 2 (reveal + docs) remains.*
+*Updated 2026-09-20. Status: both phases done. What remains is not code — it is the visual check nobody has done.*
 
 ## What this is
 
@@ -36,7 +36,7 @@ question: rather than finding somewhere safe to put a hint, it accepts that the 
 | | |
 | --- | --- |
 | Plan | Written and critiqued once — four blockers, five majors, all addressed |
-| Code | Phase 1 shipped: 74 tests (was 68), clippy `-D warnings` clean |
+| Code | Both phases shipped: 76 tests (was 68), clippy `-D warnings` clean, `cargo doc` clean |
 | Branch | Work belongs on `code-editor-widget` (not `master`), which is where the 68 tests live |
 | Predecessor | `.claude/map/code-editor-widget/` — complete, read its `MAP_PHASE_6.md` first |
 
@@ -47,27 +47,41 @@ question: rather than finding somewhere safe to put a hint, it accepts that the 
 | Phase | Doc | Status |
 | --- | --- | --- |
 | 1 — Opaque chips | [MAP_PHASE_1.md](MAP_PHASE_1.md) | **done** 2026-09-20 |
-| 2 — Reveal and docs | [MAP_PHASE_2.md](MAP_PHASE_2.md) | pending |
+| 2 — Documentation | [MAP_PHASE_2.md](MAP_PHASE_2.md) | **done** 2026-09-20 |
 
 The `Probe` work and all the tests live in Phase 1, not Phase 2. A phase whose exit criteria are
 "the chip is as wide as its label" and "two hints do not overlap" cannot verify either without
 them — and a chip in the base layer compiles, runs, and is invisible.
 
-## What to build next: Phase 2
+## What to do next — and none of it is code
 
-Hold-to-reveal in `examples/live.rs`, and the places that still document hints as transparent. **No
-library code** — if Phase 2 finds itself editing `src/code_editor/`, something from Phase 1 was
-left unfinished.
+**Run the examples.** Nothing in this crate has ever been checked by eye, and chips are the most
+visual thing in it. `cargo run --example showcase` now has a hints toggle, so comparing annotated
+against bare is a click. Things worth looking at specifically:
 
-One entry in its table is already satisfied: the `widget.rs:771-775` comment went with the loop
-Phase 1 replaced. Two stale comments remain in `widget.rs`, plus the `inlay.rs` docstrings,
-`src/lib.rs:87`, `tests/snapshots.rs:95`, and `README.md:86`/`:100` — the last of which lists
-opaque chips as explicitly *out of scope*.
+- Does a chip actually hide the code under it, or does the translucent border let a hairline
+  through? The border is the label's colour at 0.4 alpha, and a quad mixes its border into its
+  fill rather than compositing over — so the outermost pixel is only that opaque. The rounded
+  corner is anti-aliased either way, so this may be invisible. If it is not, `color.mix(fill, 0.6)`
+  in `inlay::Style::new` gives an opaque outline of the same apparent dimness, at the cost of
+  rewriting the two alpha assertions in `the_default_chip_is_outlined_in_the_color_of_its_label`.
+- Does the chip read as laid into the code, or pasted over it? Radius is 2.0, width 1.0.
+- Two hints close together on one row: they shift right to clear each other, but each snaps to the
+  pixel grid independently, so a sub-pixel clearance can still show as a one-pixel overlap.
+- The squiggles, the gutter alignment, and everything else on the predecessor plan's manual
+  checklist, which is still outstanding.
 
-Worth knowing before writing the reveal: Phase 1's measurement cache is
-`resize_with(hints.len(), ..)`, so passing `&[]` drops every cached label and the next reveal
-re-shapes all of them. One pass per reveal, not per frame — fine for the example, but if it ever
-matters the fix is to keep the cache and skip the draw rather than empty the slice.
+**Then, and only then, generate the snapshot baselines.** `cargo test -- --ignored` *records*
+rather than compares on a first run: `matches_image` writes the golden and returns `Ok(true)`. The
+chips changed what every hint snapshot captures, so a run before the visual check bakes in exactly
+the thing nobody has looked at. Open the four PNGs, confirm each shows what its name claims, then
+commit them.
+
+**Decide about hold-to-reveal.** The design premise is that hints are momentary, which is what
+justifies them being opaque. The toggle demonstrates the mechanism; a held modifier is the same
+conditional on a different trigger, documented in the crate docs but not built. If you want it
+shown rather than described, it is an arm on `live.rs`'s existing subscription — which the Restore
+button also uses, so add to it rather than replacing it.
 
 ## One test is superseded, on purpose
 
