@@ -154,8 +154,11 @@ impl Showcase {
 
         let cursor = self.content.cursor();
 
+        // Bytes rather than the columns an editor usually reports, because bytes are
+        // the units a decoration is anchored in: line 37 carries a hint at byte 19,
+        // and this is where to read that number off.
         let status = text(format!(
-            "{}:{}",
+            "line {}, byte {}",
             cursor.position.line + 1,
             cursor.position.index + 1
         ));
