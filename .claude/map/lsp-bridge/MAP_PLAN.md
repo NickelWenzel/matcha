@@ -1191,6 +1191,27 @@ test Phase 7 could not build fixtures for, asserting the
 `document_changes`-over-`changes` precedence and step order. The round trip
 needs outbound and is Phase 10's exit.
 
+### Phase 10 — `lsp-types`, outbound and client capabilities — **DONE**
+
+*Deviation on the error type. The plan had `uri::Error` plus a separate
+`OutboundError`; shipped is one `lsp::outbound::Error` with `Uri`, `Json` and
+`Snippet` variants. `OutboundError` is a composite name the crate's own rule
+forbids, and two error types for one direction is one more than the direction
+has. A third variant turned out to be needed anyway: `data` and a command's
+arguments are carried as JSON text and have to parse on the way out.*
+
+*Both conversions go through one generic helper each — `uri<T: FromStr>` and
+`json<T: FromStr>` — so the types that differ across the range are never
+written down, only inferred from the field being filled.*
+
+*The round trip caught a real asymmetry: an empty `Vec` was going out as
+`Some([])` where `None` came in. They read the same on the wire and are
+different JSON, so empty collections now go out absent, as they arrived.*
+
+*A workspace edit always goes out as the list form, never the map. The map
+carries no version, no order and no file operation, so writing to it would
+lose whatever the list was carrying.*
+
 ### Phases 10 and 12 — outbound conversions and client capabilities
 `TryFrom<lsp::X> for lsp_types::X` (Phase 10) and for `gen_lsp_types`
 (Phase 12).

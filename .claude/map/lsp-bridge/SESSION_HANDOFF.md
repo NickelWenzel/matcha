@@ -31,7 +31,7 @@ field; the conversion sits beside it behind a feature nobody gets by default.
 | branch | `lsp_bridge`, cut from `master` at `2533bf9`, **no commits yet** |
 | baseline | 69 unit + 5 behaviour + 2 doctests green; 4 snapshots `#[ignore]`d; clippy and fmt clean |
 | plan | `MAP_PLAN.md` + 13 phase docs, **battle-tested through 6 rounds of critique** |
-| phases done | 9 of 13 |
+| phases done | 10 of 13 |
 
 ## The plan
 
@@ -51,7 +51,7 @@ user's file.
 | 7 | Workspace edits | **done** |
 | 8 | Code actions and the message envelope | **done** |
 | 9 | `lsp-types`, inbound | **done** |
-| 10 | `lsp-types`, outbound and client capabilities | pending |
+| 10 | `lsp-types`, outbound and client capabilities | **done** |
 | 11 | `gen-lsp-types`, inbound | pending |
 | 12 | `gen-lsp-types`, outbound and client capabilities | pending |
 | 13 | The mock-LSP example and the docs | pending |
