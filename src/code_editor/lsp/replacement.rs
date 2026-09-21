@@ -23,3 +23,30 @@ pub struct Replacement {
     /// before applying them.
     pub annotation_id: Option<String>,
 }
+
+/// One entry in a document's list of edits.
+#[non_exhaustive]
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Change {
+    /// An ordinary replacement.
+    Replace(Replacement),
+    /// A snippet, which matcha will not apply.
+    Snippet(Snippet),
+}
+
+/// A replacement written in snippet syntax.
+///
+/// Kept rather than dropped, and refused rather than applied. Its text is a
+/// template: `$0` marks where the cursor should end up and `${1:name}` marks a
+/// field to fill in. Inserting it as it stands would put those markers in the
+/// user's file. An application that supports snippets expands one itself and
+/// applies the result.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Snippet {
+    /// The text it would replace.
+    pub range: Range,
+    /// Snippet syntax, not literal text.
+    pub value: String,
+    /// The change annotation this belongs to.
+    pub annotation_id: Option<String>,
+}

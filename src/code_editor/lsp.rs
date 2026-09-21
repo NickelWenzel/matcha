@@ -28,16 +28,20 @@
 //! [`revision`]: crate::Content::revision
 
 pub mod diagnostic;
+pub mod document;
 pub mod hint;
 
+mod apply;
 mod bridge;
 mod encoding;
+mod error;
 mod position;
 mod replacement;
 
 pub use bridge::Bridge;
 pub use diagnostic::Diagnostic;
 pub use encoding::Encoding;
+pub use error::Error;
 pub use hint::Hint;
 pub use position::{Position, Range};
-pub use replacement::Replacement;
+pub use replacement::{Change, Replacement, Snippet};
