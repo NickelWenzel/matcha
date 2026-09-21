@@ -18,6 +18,7 @@ all-features = true
 # surface, which is the honest reason rather than dependency weight.
 [features]
 lsp = []
+lsp-types = ["lsp", "dep:lsp-types"]
 
 # A renderer backend (`wgpu` or `tiny-skia`, both default) is mandatory: without one
 # `iced_renderer::Renderer` resolves to `()`, whose `text::Renderer::Editor` is also `()`,
@@ -27,6 +28,19 @@ iced = { git = "https://github.com/iced-rs/iced", rev = "fa3bae52874274c012a27d4
     "advanced",
     "highlighter",
 ] }
+
+# A range, not a pin, and the range is the point. This crate has been frozen at
+# 0.97 since 2024, while `async-lsp` -- the obvious transport for an iced
+# application -- asks for ^0.95. Cargo reads a 0.x minor as a major, so those
+# two are disjoint: pinning either hands an application a second copy of the
+# types and nothing that unifies with it. A range lets Cargo settle on whatever
+# is already in the graph.
+#
+# Every struct read here is identical across the range, and one source builds
+# against all three versions. Two rules keep that true: read a URI with
+# `as_str`, and match a severity on its associated constants. Both are spelled
+# out in `src/code_editor/lsp/from_lsp_types.rs`.
+lsp-types = { version = ">=0.95, <0.98", optional = true }
 
 # `fira-sans` embeds a known font so shaped-geometry assertions do not depend on whatever
 # fonts the host machine happens to have. `iced_test` must come from the same git rev as

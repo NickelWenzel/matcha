@@ -32,6 +32,9 @@ pub mod document;
 pub mod hint;
 pub mod workspace;
 
+#[cfg(feature = "lsp-types")]
+pub mod from_lsp_types;
+
 mod action;
 mod apply;
 mod bridge;
