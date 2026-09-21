@@ -689,7 +689,19 @@ local and is not reachable from `lsp/`), in all three encodings; a
 returns `None`; `(u32::MAX, u32::MAX)`; an empty buffer; a line at, and beyond,
 `line_count`.
 
-### Phase 3 — Revision counting, and what a converted position means
+### Phase 3 — Revision counting, and what a converted position means — **DONE**
+
+*Landed as planned. The `pub(super)` on both tuple elements was the predicted
+trap and the plan's warning held: the accessor sits in `lsp/bridge.rs`, so a
+bare `u64` would have been `error[E0616]`. Five mutations, all caught by name.*
+
+*One correction for later phases: `mouse::click::Kind` is **not** re-exported at
+`iced::mouse`, which carries only `Button`, `Cursor`, `Event`, `Interaction` and
+`ScrollDelta`. It is at `iced::advanced::mouse::click::Kind`.*
+
+*The revision tests are gated on the feature even though the field and the bump
+are not, because `revision()` is the only way to observe either.*
+
 The smallest phase, and the one `apply` depends on for honesty.
 
 `Content` gains a **second tuple element**, `Content(pub(super) RefCell<text::Editor>, pub(super) u64)`.

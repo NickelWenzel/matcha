@@ -31,7 +31,7 @@ field; the conversion sits beside it behind a feature nobody gets by default.
 | branch | `lsp_bridge`, cut from `master` at `2533bf9`, **no commits yet** |
 | baseline | 69 unit + 5 behaviour + 2 doctests green; 4 snapshots `#[ignore]`d; clippy and fmt clean |
 | plan | `MAP_PLAN.md` + 13 phase docs, **battle-tested through 6 rounds of critique** |
-| phases done | 2 of 13 |
+| phases done | 3 of 13 |
 
 ## The plan
 
@@ -44,7 +44,7 @@ user's file.
 |---|---|---|
 | 1 | Feature scaffold | **done** |
 | 2 | Encoding conversion, the `Bridge`, and `Replacement` | **done** |
-| 3 | Revision counting, and what a converted position means | pending |
+| 3 | Revision counting, and what a converted position means | **done** |
 | 4 | Diagnostics and inlay hints | pending |
 | 5 | Applying edits: validation and commit | pending |
 | 6 | Applying edits: caret and selection | pending |
@@ -60,23 +60,26 @@ Phase 2 is the gate. Past it, Phase 4 and Phase 5 are independent; Phase 6 is a
 leaf nothing depends on; Phase 7 needs only Phase 5. Phase 8 is the join.
 Phases 9–10 and 11–12 are independent pairs.
 
-## What to build next — Phase 3
+## What to build next — Phase 4, or Phase 5
 
-Revision counting: `Content` gains a second tuple element and
-`Content::revision()`. The smallest phase, and the one `Content::apply` depends
-on for honesty — a server's answer describes an older document, and for an edit
-that is silent corruption rather than a stale squiggle.
+Phases 4 and 5 are independent and either can go first. Phase 4 is the
+decorations an application can see; Phase 5 is the risky one.
 
-Three things `MAP_PHASE_3.md` gets right that are easy to lose:
+**Phase 4 — diagnostics and inlay hints.** The payload types plus `Bridge`'s two
+batch methods, and it now also owns the single-pass batch walk that Phase 2 was
+originally to have shipped unused. Three things `MAP_PHASE_4.md` pins down:
+`diagnostics()` is total and index-correspondent, because the widget's own
+`Diagnostic` carries no message and an application showing one on hover keeps
+the `lsp::Diagnostic` vector alongside; `hints()` drops only an empty label,
+because the widget paints an opaque chip for one; and neither sorts, because
+`widget.rs:806` already sorts by shaped geometry. It also brings `tests/lsp.rs`,
+which is what proves `Vec<Hint<'static>>` satisfies the widget's
+`&'a [Hint<'a>]` bound.
 
-- **Both tuple elements need `pub(super)`.** The accessor lives in
-  `lsp/bridge.rs`, a sibling of `content`, so a bare `u64` is `error[E0616]`.
-- **Bump on `action.is_edit()`, not on every `perform`.** The widget publishes
-  every action for the application to feed back, so `Scroll`, `Click` and `Drag`
-  all arrive there; bumping on those changes the revision on every mouse-move of
-  a drag-select.
-- **`Clone` restarts at 0**, because `Content::clone` reshapes through
-  `with_text`. A recorded revision then reads as stale rather than falsely fresh.
+**Phase 5 — applying edits.** Every rule in it was measured, and three were bugs
+in earlier drafts. The sort key is `(start, end)`, stable ascending, iterated in
+reverse. Line endings split on `\r\n | \n | \r` and rejoin with the buffer's,
+and when the buffer gives no evidence of its convention they are left alone.
 
 ## Residual risk, stated plainly
 
