@@ -1329,7 +1329,29 @@ would mean choosing a fixture that dodges the lossy branch, which is exactly the
 vacuous test this plan warns about; an unparseable URI returns `Err`, never panics; builds and lints
 at all three versions.
 
-### Phase 13 — The mock-LSP example and the docs
+### Phase 13 — The mock-LSP example and the docs — **DONE**
+
+*Deviation: the example delivers answers on a **key** rather than a timer.
+`time::every` needs a runtime backend that matcha's iced features do not
+include, and adding one for an example would have pulled an async runtime into
+a crate that has none. Keys are better anyway — editing between the offer of a
+code action and its application is what shows the staleness check working, and
+a timer takes that choice away from the reader.*
+
+***The crate-level documentation cannot link to feature-gated items.*** *It is
+not itself gated, so `[`lsp`]` and `[`Content::apply`]` resolve under
+`--all-features` and warn under none, and `cargo doc --no-deps` is in the
+checklist. The names are written as code spans instead: still real, still
+greppable, and the doc builds clean in every configuration.*
+
+*One README claim beyond the three the plan listed was also false — "Converting
+from LSP's UTF-16 is your job; matcha has no `lsp-types` dependency", in the
+list of things to know before wiring a server up. Found by grepping for the
+claims rather than by working from the plan's list.*
+
+*The `[[example]]` block did not disable auto-discovery for `showcase` and
+`live`, which was the one risk in introducing it.*
+
 The crate's first `[[example]]` block (forced by `required-features`), and
 `serde_json` added to `[dev-dependencies]` — the example deserializes real
 notification payloads, which is worth saying beside *Out of scope: serialization*
@@ -1560,6 +1582,34 @@ revision counter.
 
 **`src/code_editor/widget.rs` and `src/code_editor/geometry.rs` appear nowhere.**
 If a phase wants to edit either, the design has been broken — stop and report.
+
+---
+
+## Outcome
+
+All thirteen phases landed. 26 commits, no suppression anywhere in the feature,
+and `cargo test` without features still reports the 69 unit tests it did before
+any of this — which is the only signal that gated code has not leaked into the
+default build.
+
+What the plan did not anticipate, in the order it was found:
+
+- **Phase 2**: mutation testing found the ASCII fast path's bound untested. A
+  column exactly at the end of an ASCII line is what an append names, and
+  `clamp` cannot tell it from the wrong answer.
+- **Phase 4**: the batch walk became one scanner used two ways rather than a
+  second implementation to keep in step.
+- **Phase 5**: `last_end = end.max(last_end)`, taken from helix, is dead logic
+  given the sort and the reversed-range rule. And the `LineEnding` fallback was
+  implemented correctly and tested with a fixture that could not tell it from
+  the wrong answer.
+- **Phase 6**: reading the cursor inside the commit loop is invisible with one
+  edit. It takes two.
+- **Phase 10**: an empty `Vec` went out as `Some([])` where `None` came in.
+- **Phase 12**: integer enums are portable by name going out and by number
+  coming in, and neither direction works the other way.
+
+Six of those were found by mutation testing against a green suite.
 
 ---
 

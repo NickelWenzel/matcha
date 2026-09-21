@@ -31,7 +31,7 @@ field; the conversion sits beside it behind a feature nobody gets by default.
 | branch | `lsp_bridge`, cut from `master` at `2533bf9`, **no commits yet** |
 | baseline | 69 unit + 5 behaviour + 2 doctests green; 4 snapshots `#[ignore]`d; clippy and fmt clean |
 | plan | `MAP_PLAN.md` + 13 phase docs, **battle-tested through 6 rounds of critique** |
-| phases done | 12 of 13 |
+| phases done | **13 of 13** |
 
 ## The plan
 
@@ -54,30 +54,53 @@ user's file.
 | 10 | `lsp-types`, outbound and client capabilities | **done** |
 | 11 | `gen-lsp-types`, inbound | **done** |
 | 12 | `gen-lsp-types`, outbound and client capabilities | **done** |
-| 13 | The mock-LSP example and the docs | pending |
+| 13 | The mock-LSP example and the docs | **done** |
 
 Phase 2 is the gate. Past it, Phase 4 and Phase 5 are independent; Phase 6 is a
 leaf nothing depends on; Phase 7 needs only Phase 5. Phase 8 is the join.
 Phases 9–10 and 11–12 are independent pairs.
 
-## What to build next — Phase 8
+## What is left
 
-Code actions and the message envelope: `CodeAction`, `Command`, `Offer` and
-`Message`. The last of the payload types, and the phase that finishes the
-zero-dependency core.
+The plan is finished. Nothing in it is outstanding, and the two things below
+are for a person rather than a session.
 
-- **`Offer` is the union.** `textDocument/codeAction` answers with a list of
-  either shape, so a list of `CodeAction` has nowhere to put a `Command`.
-- **`Message` carries the envelope**, not just the payload. An application with
-  two buffers cannot route a diagnostics message that kept only the middle field
-  of `{ uri, diagnostics, version }`.
-- **`kind` matching is hierarchical**: `refactor.extract` matches a request for
-  `refactor`, and `refactory` does not. Document it beside the field, because
-  every consumer that reaches for `starts_with` gets it wrong.
+**Run the example and look at it.** Nothing in this feature has been seen on a
+screen: every decoration it produces was checked against a recording renderer
+and by construction, exactly as the widget's own six phases were.
 
-Phase 8 is the join: `CodeAction` carries both `Vec<Diagnostic>` from Phase 4
-and `workspace::Edit` from Phase 7. After it the shape changes -- Phases 9 to 12
-are the conversions, each with a version range to build at both ends of.
+```sh
+cargo run --example lsp --features lsp-types
+```
+
+Press **1**, **2**, **3** to deliver the payloads and **a** to apply the code
+action. Worth checking by eye: that the squiggle sits under `unwrap()` and not
+one byte to either side, since its column is UTF-16 and the line before it has
+no multibyte characters to prove the conversion by; that the two hint chips read
+as annotations rather than as code; and that editing between **3** and **a**
+leaves the status line saying the buffer moved.
+
+**Snapshot baselines still do not exist**, which predates this work and is
+unchanged by it. `tests/snapshots.rs` documents the sequence: look at the
+examples first, then `cargo test -- --ignored` to record, then open each PNG and
+confirm it shows what its test name claims, then commit. This feature draws
+nothing new, so it has no business running them.
+
+## Follow-ons, deliberately not built
+
+Each is named in the plan's *Out of scope* with the reason:
+
+- **Incremental `didChange`.** matcha cannot report what changed — iced's
+  `History` is private and `perform` exposes no change stream — so an
+  application can only send the whole document. That is about 600 KB of
+  allocation per keystroke on a 20k-line file, and it dwarfs everything the
+  encoding layer does. Fixing it is an upstream iced change.
+- **Pull diagnostics** (`textDocument/diagnostic`), which is a different shape
+  and where the ecosystem is heading.
+- **Semantic tokens, completion, hover, signature help.** The widget cannot draw
+  or host any of them.
+- **Range-limited inlay-hint requests.** matcha knows its visible rows only
+  inside `geometry`, which this plan kept closed.
 
 ## Residual risk, stated plainly
 

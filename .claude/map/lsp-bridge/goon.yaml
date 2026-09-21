@@ -139,7 +139,9 @@ key_files:
 
 examples:
   - command: cargo run --example lsp --features lsp-types
-    description: mock LSP payloads fed through the bridge (Phase 13; does not exist yet)
+    description: real publishDiagnostics, inlayHint and codeAction payloads
+                 through the bridge. 1, 2, 3 deliver them; a applies the action.
+                 Edit between 3 and a to see it refused.
   - command: cargo run --example live
     description: hold the reveal key — chips should hide the code and vanish on release
   - command: cargo run --example showcase
