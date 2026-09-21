@@ -625,7 +625,23 @@ optional dependency and the `docs.rs` metadata. The module at
 `Range::collapsed`, `Encoding` (deriving `Clone, Copy, Default`).
 **Exit:** builds and lints clean with and without `--features lsp`.
 
-### Phase 2 — Encoding conversion, the `Bridge`, and `Replacement`
+### Phase 2 — Encoding conversion, the `Bridge`, and `Replacement` — **DONE**
+
+*Two deviations, both removing a planned `allow(dead_code)` rather than
+narrowing one. **The batch walk moved to Phase 4**, whose `diagnostics()` and
+`hints()` are its only callers — shipping it here meant shipping code nothing
+calls. **`Reason::Line` became a unit variant**: nothing here reads a `lines`
+payload, and Phase 5's `apply` holds `&mut self` so it can ask `line_count()`
+itself. `Reason` is `pub(crate)`, so adding the field back costs nothing. Phase 2
+therefore carries no suppressions at all.*
+
+*Mutation testing earned its place. Seven mutations, six caught immediately —
+and **the ASCII fast path's `<=` survived**, because no test covered a column
+exactly at the end of an ASCII line. `clamp` cannot see the difference there;
+only `exact` can, and that column is what an edit appending to a line names.
+`the_column_at_the_end_of_a_line_is_exact` closes it, and all seven now fail by
+name.*
+
 The correctness core and the first public surface. Ships `Content::lsp(encoding)`
 — the constructor, an `impl Content` block living in `lsp/bridge.rs` rather than
 in `content.rs`, which keeps the crate's first feature gate out of a core file —

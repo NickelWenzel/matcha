@@ -138,7 +138,9 @@ impl Content {
 1. **Refuse a stale buffer.** `if self.1 != expected { return Err(Stale { .. }) }`.
 2. **Refuse snippets.** Any `Change::Snippet` is `Err(Unsupported { edit })`.
 3. **Convert every range through `Bridge::resolve`**, mapping each `Reason` plus
-   the edit's original index onto an `Error` variant. This is why `resolve`
+   the edit's original index onto an `Error` variant. `Reason::Line` is a unit
+   variant, so build `Error::LineOutOfBounds`'s `lines` from `line_count()`,
+   which `apply` can reach through its own `&mut self`. This is why `resolve`
    exists and why `exact` is not used here — `exact` discards the reason.
 4. **Refuse a reversed range.** `Err(ReversedRange { edit })`.
 5. **Sort `(start, end)`, stable ascending, carrying the original index.**

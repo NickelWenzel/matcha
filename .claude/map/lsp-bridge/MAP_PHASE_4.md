@@ -177,8 +177,16 @@ impl<'a> Bridge<'a> {
 }
 ```
 
-Both use the single-pass batch walk from Phase 2, and **this phase removes its
-`#[allow(dead_code)]`**.
+**This phase also writes the single-pass batch walk**, which Phase 2 was
+originally to have shipped unused. Sort the positions by `(line, character)`,
+scan each line once carrying the cursor, and scatter back through the
+permutation. Calling `resolve` per position is O(positions x line length), and
+one minified bundle — 100 KB on a single line, 2000 diagnostics — is roughly
+800 MB of scanning per publish.
+
+**When `Bridge::range` yields `None`**, `diagnostics()` still emits an entry:
+it is total. Emit a `TextRange` whose endpoints both sit on the out-of-range
+line, so the widget's own run filter drops it.
 
 `Hint<'static>` is right and worth a comment where it is returned: the labels
 are owned `String`s, so `Cow::Owned` gives `'static`, which coerces into the

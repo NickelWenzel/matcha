@@ -31,7 +31,7 @@ field; the conversion sits beside it behind a feature nobody gets by default.
 | branch | `lsp_bridge`, cut from `master` at `2533bf9`, **no commits yet** |
 | baseline | 69 unit + 5 behaviour + 2 doctests green; 4 snapshots `#[ignore]`d; clippy and fmt clean |
 | plan | `MAP_PLAN.md` + 13 phase docs, **battle-tested through 6 rounds of critique** |
-| phases done | 1 of 13 |
+| phases done | 2 of 13 |
 
 ## The plan
 
@@ -43,7 +43,7 @@ user's file.
 | # | phase | status |
 |---|---|---|
 | 1 | Feature scaffold | **done** |
-| 2 | Encoding conversion, the `Bridge`, and `Replacement` | pending |
+| 2 | Encoding conversion, the `Bridge`, and `Replacement` | **done** |
 | 3 | Revision counting, and what a converted position means | pending |
 | 4 | Diagnostics and inlay hints | pending |
 | 5 | Applying edits: validation and commit | pending |
@@ -60,27 +60,23 @@ Phase 2 is the gate. Past it, Phase 4 and Phase 5 are independent; Phase 6 is a
 leaf nothing depends on; Phase 7 needs only Phase 5. Phase 8 is the join.
 Phases 9–10 and 11–12 are independent pairs.
 
-## What to build next — Phase 2
+## What to build next — Phase 3
 
-`Bridge`, the five conversion methods, and `Replacement`. This is the
-correctness core: `MAP_PHASE_2.md` carries the converter transcribed from a
-probe that passes 14 spot checks plus a round trip over every char boundary in
-all three encodings. Type it in and run the table before trusting it.
+Revision counting: `Content` gains a second tuple element and
+`Content::revision()`. The smallest phase, and the one `Content::apply` depends
+on for honesty — a server's answer describes an older document, and for an edit
+that is silent corruption rather than a stale squiggle.
 
-Three things Phase 2 must get right, all of which were bugs in earlier drafts:
+Three things `MAP_PHASE_3.md` gets right that are easy to lose:
 
-- **One scan, three faces.** `resolve` returns `Result<_, Reason>`; `clamp` and
-  `exact` derive from it. `Reason`'s payloads exist so `clamp` never re-scans
-  and `Content::apply` can name what failed.
-- **`line == line_count` clamps on both paths**, because it is how LSP spells
-  end-of-document. A line beyond that is returned as-is with **index 0** so the
-  widget drops it silently — clamping it instead paints a squiggle under
-  unrelated text.
-- **The batch walk sorts by line and scans each line once.** A per-position
-  converter is O(positions x line length), and one minified line makes that
-  hundreds of megabytes per publish.
-
-It ships unused (its callers arrive in Phase 4) behind `#[allow(dead_code)]`.
+- **Both tuple elements need `pub(super)`.** The accessor lives in
+  `lsp/bridge.rs`, a sibling of `content`, so a bare `u64` is `error[E0616]`.
+- **Bump on `action.is_edit()`, not on every `perform`.** The widget publishes
+  every action for the application to feed back, so `Scroll`, `Click` and `Drag`
+  all arrive there; bumping on those changes the revision on every mouse-move of
+  a drag-select.
+- **`Clone` restarts at 0**, because `Content::clone` reshapes through
+  `with_text`. A recorded revision then reads as stale rather than falsely fresh.
 
 ## Residual risk, stated plainly
 
