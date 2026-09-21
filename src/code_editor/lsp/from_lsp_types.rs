@@ -14,7 +14,7 @@
 
 use super::{
     Change, CodeAction, Command, Diagnostic, Encoding, Hint, Message, Offer, Position, Range,
-    Replacement, diagnostic, document, hint, workspace,
+    Replacement, diagnostic, document, hint, outbound, workspace,
 };
 use crate::code_editor::decoration::diagnostic::Severity;
 
@@ -400,6 +400,380 @@ impl From<Option<Vec<lsp_types::InlayHint>>> for Message {
     }
 }
 
+/// A URI of whatever type the field being filled asks for.
+///
+/// The type is a `Url` at 0.95 and a `Uri` after, so it is never written down:
+/// the call site infers it from where the result is going.
+fn uri<T: std::str::FromStr>(text: &str) -> Result<T, outbound::Error> {
+    text.parse()
+        .map_err(|_| outbound::Error::Uri(text.to_owned()))
+}
+
+/// The JSON value some text was meant to be.
+fn json<T: std::str::FromStr>(from: Option<String>) -> Result<Option<T>, outbound::Error> {
+    match from {
+        Some(text) => match text.parse() {
+            Ok(value) => Ok(Some(value)),
+            Err(_) => Err(outbound::Error::Json(text)),
+        },
+        None => Ok(None),
+    }
+}
+
+// ---- back the other way ----
+//
+// Fallible, and the reason is URIs. At 0.96 and after a URI is built only by
+// parsing, and at 0.95 it is a `url::Url`, which is also built by parsing.
+// Neither type can be named here, so both are reached by inferring the type
+// from the field being filled.
+
+impl From<Position> for lsp_types::Position {
+    fn from(from: Position) -> Self {
+        Self {
+            line: from.line,
+            character: from.character,
+        }
+    }
+}
+
+impl From<Range> for lsp_types::Range {
+    fn from(from: Range) -> Self {
+        Self {
+            start: from.start.into(),
+            end: from.end.into(),
+        }
+    }
+}
+
+impl From<Encoding> for lsp_types::PositionEncodingKind {
+    fn from(from: Encoding) -> Self {
+        match from {
+            Encoding::Utf8 => lsp_types::PositionEncodingKind::UTF8,
+            Encoding::Utf16 => lsp_types::PositionEncodingKind::UTF16,
+            Encoding::Utf32 => lsp_types::PositionEncodingKind::UTF32,
+        }
+    }
+}
+
+impl From<Replacement> for lsp_types::TextEdit {
+    fn from(from: Replacement) -> Self {
+        Self {
+            range: from.range.into(),
+            new_text: from.new_text,
+        }
+    }
+}
+
+impl TryFrom<Change> for lsp_types::OneOf<lsp_types::TextEdit, lsp_types::AnnotatedTextEdit> {
+    type Error = outbound::Error;
+
+    fn try_from(from: Change) -> Result<Self, Self::Error> {
+        match from {
+            Change::Replace(replacement) => Ok(match replacement.annotation_id.clone() {
+                Some(annotation_id) => lsp_types::OneOf::Right(lsp_types::AnnotatedTextEdit {
+                    text_edit: replacement.into(),
+                    annotation_id,
+                }),
+                None => lsp_types::OneOf::Left(replacement.into()),
+            }),
+            Change::Snippet(_) => Err(outbound::Error::Snippet),
+        }
+    }
+}
+
+impl TryFrom<Diagnostic> for lsp_types::Diagnostic {
+    type Error = outbound::Error;
+
+    fn try_from(from: Diagnostic) -> Result<Self, Self::Error> {
+        Ok(Self {
+            range: from.range.into(),
+            severity: Some(match from.severity {
+                Severity::Error => lsp_types::DiagnosticSeverity::ERROR,
+                Severity::Warning => lsp_types::DiagnosticSeverity::WARNING,
+                Severity::Information => lsp_types::DiagnosticSeverity::INFORMATION,
+                Severity::Hint => lsp_types::DiagnosticSeverity::HINT,
+            }),
+            code: from.code.map(|code| match code {
+                diagnostic::Code::Number(number) => lsp_types::NumberOrString::Number(number),
+                diagnostic::Code::Text(text) => lsp_types::NumberOrString::String(text),
+            }),
+            code_description: from
+                .code_description
+                .map(|href| {
+                    Ok::<_, outbound::Error>(lsp_types::CodeDescription { href: uri(&href)? })
+                })
+                .transpose()?,
+            source: from.source,
+            message: from.message,
+            related_information: related(from.related)?,
+            // Absent rather than empty. The two read the same on the wire, and
+            // a server that sent nothing should get nothing back rather than a
+            // list it did not write.
+            tags: absent_if_empty(
+                from.tags
+                    .into_iter()
+                    .map(|tag| match tag {
+                        diagnostic::Tag::Unnecessary => lsp_types::DiagnosticTag::UNNECESSARY,
+                        diagnostic::Tag::Deprecated => lsp_types::DiagnosticTag::DEPRECATED,
+                    })
+                    .collect(),
+            ),
+            data: json(from.data)?,
+        })
+    }
+}
+
+/// Nothing rather than an empty list, which is what a server that had nothing
+/// to say sent in the first place.
+fn absent_if_empty<T>(from: Vec<T>) -> Option<Vec<T>> {
+    (!from.is_empty()).then_some(from)
+}
+
+fn related(
+    from: Vec<diagnostic::Related>,
+) -> Result<Option<Vec<lsp_types::DiagnosticRelatedInformation>>, outbound::Error> {
+    if from.is_empty() {
+        return Ok(None);
+    }
+
+    from.into_iter()
+        .map(|related| {
+            Ok(lsp_types::DiagnosticRelatedInformation {
+                location: lsp_types::Location {
+                    uri: uri(&related.uri)?,
+                    range: related.range.into(),
+                },
+                message: related.message,
+            })
+        })
+        .collect::<Result<_, _>>()
+        .map(Some)
+}
+
+impl TryFrom<CodeAction> for lsp_types::CodeAction {
+    type Error = outbound::Error;
+
+    fn try_from(from: CodeAction) -> Result<Self, Self::Error> {
+        Ok(Self {
+            title: from.title,
+            kind: from.kind.map(lsp_types::CodeActionKind::from),
+            diagnostics: absent_if_empty(
+                from.diagnostics
+                    .into_iter()
+                    .map(lsp_types::Diagnostic::try_from)
+                    .collect::<Result<Vec<_>, _>>()?,
+            ),
+            edit: from
+                .edit
+                .map(lsp_types::WorkspaceEdit::try_from)
+                .transpose()?,
+            command: from.command.map(lsp_types::Command::try_from).transpose()?,
+            is_preferred: Some(from.is_preferred),
+            disabled: from
+                .disabled
+                .map(|reason| lsp_types::CodeActionDisabled { reason }),
+            data: json(from.data)?,
+        })
+    }
+}
+
+impl TryFrom<Command> for lsp_types::Command {
+    type Error = outbound::Error;
+
+    fn try_from(from: Command) -> Result<Self, Self::Error> {
+        Ok(Self {
+            title: from.title,
+            command: from.command,
+            arguments: absent_if_empty(
+                from.arguments
+                    .into_iter()
+                    .map(|argument| {
+                        argument
+                            .parse()
+                            .map_err(|_| outbound::Error::Json(argument.clone()))
+                    })
+                    .collect::<Result<Vec<_>, _>>()?,
+            ),
+        })
+    }
+}
+
+impl TryFrom<document::Edit> for lsp_types::TextDocumentEdit {
+    type Error = outbound::Error;
+
+    fn try_from(from: document::Edit) -> Result<Self, Self::Error> {
+        Ok(Self {
+            text_document: lsp_types::OptionalVersionedTextDocumentIdentifier {
+                uri: uri(&from.uri)?,
+                version: from.version,
+            },
+            edits: from
+                .edits
+                .into_iter()
+                .map(lsp_types::OneOf::try_from)
+                .collect::<Result<_, _>>()?,
+        })
+    }
+}
+
+impl TryFrom<workspace::Edit> for lsp_types::WorkspaceEdit {
+    type Error = outbound::Error;
+
+    fn try_from(from: workspace::Edit) -> Result<Self, Self::Error> {
+        let change_annotations = from
+            .annotations
+            .into_iter()
+            .map(|(id, annotation)| {
+                (
+                    id,
+                    lsp_types::ChangeAnnotation {
+                        label: annotation.label,
+                        needs_confirmation: Some(annotation.needs_confirmation),
+                        description: annotation.description,
+                    },
+                )
+            })
+            .collect::<std::collections::HashMap<_, _>>();
+
+        // Always the list, never the map: the map cannot carry a version, an
+        // order, or a file operation, and it is the shape a server sends only
+        // when it has none of those to say.
+        let operations = from
+            .steps
+            .into_iter()
+            .map(|step| {
+                Ok(match step {
+                    workspace::Step::Document(edit) => {
+                        lsp_types::DocumentChangeOperation::Edit(edit.try_into()?)
+                    }
+                    workspace::Step::Operation(operation) => {
+                        lsp_types::DocumentChangeOperation::Op(operation.try_into()?)
+                    }
+                })
+            })
+            .collect::<Result<Vec<_>, outbound::Error>>()?;
+
+        Ok(Self {
+            changes: None,
+            document_changes: Some(lsp_types::DocumentChanges::Operations(operations)),
+            change_annotations: (!change_annotations.is_empty()).then_some(change_annotations),
+        })
+    }
+}
+
+impl TryFrom<workspace::Operation> for lsp_types::ResourceOp {
+    type Error = outbound::Error;
+
+    fn try_from(from: workspace::Operation) -> Result<Self, Self::Error> {
+        Ok(match from {
+            workspace::Operation::Create(create) => {
+                lsp_types::ResourceOp::Create(lsp_types::CreateFile {
+                    uri: uri(&create.uri)?,
+                    options: Some(lsp_types::CreateFileOptions {
+                        overwrite: Some(create.overwrite),
+                        ignore_if_exists: Some(create.ignore_if_exists),
+                    }),
+                    annotation_id: create.annotation_id,
+                })
+            }
+            workspace::Operation::Rename(rename) => {
+                lsp_types::ResourceOp::Rename(lsp_types::RenameFile {
+                    old_uri: uri(&rename.old_uri)?,
+                    new_uri: uri(&rename.new_uri)?,
+                    options: Some(lsp_types::RenameFileOptions {
+                        overwrite: Some(rename.overwrite),
+                        ignore_if_exists: Some(rename.ignore_if_exists),
+                    }),
+                    annotation_id: rename.annotation_id,
+                })
+            }
+            workspace::Operation::Delete(delete) => {
+                lsp_types::ResourceOp::Delete(lsp_types::DeleteFile {
+                    uri: uri(&delete.uri)?,
+                    options: Some(lsp_types::DeleteFileOptions {
+                        recursive: Some(delete.recursive),
+                        ignore_if_not_exists: Some(delete.ignore_if_not_exists),
+                        annotation_id: delete.annotation_id,
+                    }),
+                })
+            }
+        })
+    }
+}
+
+impl TryFrom<Offer> for lsp_types::CodeActionOrCommand {
+    type Error = outbound::Error;
+
+    fn try_from(from: Offer) -> Result<Self, Self::Error> {
+        Ok(match from {
+            Offer::Action(action) => lsp_types::CodeActionOrCommand::CodeAction(action.try_into()?),
+            Offer::Command(command) => lsp_types::CodeActionOrCommand::Command(command.try_into()?),
+        })
+    }
+}
+
+/// What this bridge understands, ready to send in `initialize`.
+///
+/// Most of what matcha models arrives only if the application asked for it. A
+/// server that is not told the client understands change annotations never
+/// sends one, and a diagnostic's `data` is dropped on the way out unless
+/// `dataSupport` is set -- which takes diagnostic-driven code actions with it,
+/// because a server cannot match a diagnostic that has lost its own
+/// identifiers.
+///
+/// Merge this into whatever else the application advertises. Nothing here is a
+/// promise about anything matcha does not do.
+///
+/// `failureHandling` says `textOnlyTransactional` rather than `transactional`,
+/// which is the honest answer: [`Content::apply`](crate::Content::apply) is all
+/// or nothing for one buffer and matcha cannot undo across several.
+///
+/// `normalizesLineEndings` says true, because it does.
+pub fn client_capabilities() -> lsp_types::ClientCapabilities {
+    lsp_types::ClientCapabilities {
+        workspace: Some(lsp_types::WorkspaceClientCapabilities {
+            workspace_edit: Some(lsp_types::WorkspaceEditClientCapabilities {
+                document_changes: Some(true),
+                resource_operations: Some(vec![
+                    lsp_types::ResourceOperationKind::Create,
+                    lsp_types::ResourceOperationKind::Rename,
+                    lsp_types::ResourceOperationKind::Delete,
+                ]),
+                failure_handling: Some(lsp_types::FailureHandlingKind::TextOnlyTransactional),
+                normalizes_line_endings: Some(true),
+                change_annotation_support: Some(
+                    lsp_types::ChangeAnnotationWorkspaceEditClientCapabilities {
+                        groups_on_label: Some(false),
+                    },
+                ),
+            }),
+            ..Default::default()
+        }),
+        text_document: Some(lsp_types::TextDocumentClientCapabilities {
+            publish_diagnostics: Some(lsp_types::PublishDiagnosticsClientCapabilities {
+                related_information: Some(true),
+                tag_support: Some(lsp_types::TagSupport {
+                    value_set: vec![
+                        lsp_types::DiagnosticTag::UNNECESSARY,
+                        lsp_types::DiagnosticTag::DEPRECATED,
+                    ],
+                }),
+                version_support: Some(true),
+                code_description_support: Some(true),
+                data_support: Some(true),
+            }),
+            inlay_hint: Some(lsp_types::InlayHintClientCapabilities {
+                dynamic_registration: Some(false),
+                resolve_support: Some(lsp_types::InlayHintResolveClientCapabilities {
+                    properties: vec!["tooltip".to_owned(), "textEdits".to_owned()],
+                }),
+            }),
+            ..Default::default()
+        }),
+        ..Default::default()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -450,6 +824,178 @@ mod tests {
                 new_text: "x".to_owned(),
             })],
         }
+    }
+
+    #[test]
+    fn a_replacement_survives_the_trip_out_and_back() {
+        let there = lsp_types::TextEdit {
+            range: range(),
+            new_text: "answer".to_owned(),
+        };
+
+        let back = lsp_types::TextEdit::from(Replacement::from(there.clone()));
+
+        assert_eq!(back, there);
+    }
+
+    #[test]
+    fn a_workspace_edit_survives_the_trip_out_and_back() {
+        let there = lsp_types::WorkspaceEdit {
+            changes: None,
+            document_changes: Some(lsp_types::DocumentChanges::Operations(vec![
+                lsp_types::DocumentChangeOperation::Op(lsp_types::ResourceOp::Create(
+                    lsp_types::CreateFile {
+                        uri: uri!("file:///b.rs"),
+                        options: Some(lsp_types::CreateFileOptions {
+                            overwrite: Some(true),
+                            ignore_if_exists: Some(false),
+                        }),
+                        annotation_id: None,
+                    },
+                )),
+                lsp_types::DocumentChangeOperation::Edit(edit("file:///b.rs", Some(1))),
+            ])),
+            change_annotations: None,
+        };
+
+        let back = lsp_types::WorkspaceEdit::try_from(workspace::Edit::from(there.clone()))
+            .expect("every URI came from one that parsed");
+
+        assert_eq!(back, there);
+    }
+
+    #[test]
+    fn a_code_action_survives_the_trip_out_and_back() {
+        let there = lsp_types::CodeAction {
+            title: "Import".to_owned(),
+            kind: Some(lsp_types::CodeActionKind::QUICKFIX),
+            diagnostics: Some(vec![wire(Some(lsp_types::DiagnosticSeverity::ERROR))]),
+            edit: None,
+            command: None,
+            is_preferred: Some(true),
+            disabled: Some(lsp_types::CodeActionDisabled {
+                reason: "not here".to_owned(),
+            }),
+            data: None,
+        };
+
+        let back = lsp_types::CodeAction::try_from(CodeAction::from(there.clone()))
+            .expect("nothing here needs a URI");
+
+        assert_eq!(back.title, there.title);
+        assert_eq!(back.kind, there.kind);
+        assert_eq!(back.is_preferred, there.is_preferred);
+        assert_eq!(back.disabled, there.disabled);
+        assert_eq!(back.diagnostics, there.diagnostics);
+    }
+
+    #[test]
+    fn a_hint_is_deliberately_not_the_same_on_the_way_back() {
+        // Label parts are joined on the way in, and the locations each part
+        // could carry go with them. Asserting equality here would mean picking
+        // a hint that has no parts, which tests nothing.
+        let there = lsp_types::InlayHint {
+            position: lsp_types::Position {
+                line: 0,
+                character: 0,
+            },
+            label: lsp_types::InlayHintLabel::LabelParts(vec![lsp_types::InlayHintLabelPart {
+                value: ": i32".to_owned(),
+                location: Some(lsp_types::Location {
+                    uri: uri!("file:///defined.rs"),
+                    range: range(),
+                }),
+                ..Default::default()
+            }]),
+            kind: None,
+            text_edits: None,
+            tooltip: None,
+            padding_left: None,
+            padding_right: None,
+            data: None,
+        };
+
+        let hint = Hint::from(there);
+
+        assert_eq!(hint.label, ": i32", "the text survives");
+        // Where it was defined does not, which is why a hint is text here and
+        // not something to follow.
+    }
+
+    #[test]
+    fn a_uri_the_crate_will_not_take_is_an_error_rather_than_a_panic() {
+        let edit = workspace::Edit {
+            steps: vec![workspace::Step::Document(document::Edit {
+                uri: "not a uri at all".to_owned(),
+                version: None,
+                edits: Vec::new(),
+            })],
+            annotations: std::collections::HashMap::new(),
+        };
+
+        assert_eq!(
+            lsp_types::WorkspaceEdit::try_from(edit),
+            Err(outbound::Error::Uri("not a uri at all".to_owned()))
+        );
+    }
+
+    #[test]
+    fn a_snippet_has_nowhere_to_go_in_this_crate() {
+        let snippet = Change::Snippet(super::super::Snippet {
+            range: Range {
+                start: Position {
+                    line: 0,
+                    character: 0,
+                },
+                end: Position {
+                    line: 0,
+                    character: 0,
+                },
+            },
+            value: "${1:name}$0".to_owned(),
+            annotation_id: None,
+        });
+
+        assert_eq!(
+            lsp_types::OneOf::try_from(snippet).err(),
+            Some(outbound::Error::Snippet),
+            "reporting this as a bad URI would send the caller looking in the \
+             wrong place"
+        );
+    }
+
+    #[test]
+    fn the_advertised_capabilities_ask_for_everything_that_is_modelled() {
+        let capabilities = client_capabilities();
+
+        let edit = capabilities
+            .workspace
+            .and_then(|workspace| workspace.workspace_edit)
+            .expect("workspace edits are advertised");
+
+        assert_eq!(edit.document_changes, Some(true));
+        assert_eq!(edit.resource_operations.map(|kinds| kinds.len()), Some(3));
+        assert_eq!(
+            edit.normalizes_line_endings,
+            Some(true),
+            "matcha does normalise them, and a server told otherwise may send \
+             endings that do not match the file"
+        );
+        assert!(edit.change_annotation_support.is_some());
+
+        let diagnostics = capabilities
+            .text_document
+            .and_then(|document| document.publish_diagnostics)
+            .expect("diagnostics are advertised");
+
+        assert_eq!(
+            diagnostics.data_support,
+            Some(true),
+            "without this a server drops the identifiers it needs to resolve a \
+             fix for a diagnostic"
+        );
+        assert_eq!(diagnostics.version_support, Some(true));
+        assert!(diagnostics.tag_support.is_some());
     }
 
     #[test]

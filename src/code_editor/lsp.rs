@@ -30,6 +30,7 @@
 pub mod diagnostic;
 pub mod document;
 pub mod hint;
+pub mod outbound;
 pub mod workspace;
 
 #[cfg(feature = "lsp-types")]
