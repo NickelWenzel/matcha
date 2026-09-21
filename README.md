@@ -82,7 +82,8 @@ impl Editor {
 Three things to know before wiring a language server up to it:
 
 1. **Positions are UTF-8 byte indices** into a line — not UTF-16 code units, and not columns.
-   Converting from LSP's UTF-16 is your job; matcha has no `lsp-types` dependency.
+   The widget takes them in its own units whatever else is switched on. Converting from the
+   protocol's is [the `lsp` feature's job](#speaking-to-a-language-server), or yours.
 2. **Inlay hints are opaque overlays.** Each label sits on a filled, outlined chip drawn in a
    layer above the text, so a hint inside a line hides the code there — which is why hints read
    best shown momentarily. Showing them is yours to decide: `&hints` or `&[]`, from a toggle or
@@ -92,11 +93,35 @@ Three things to know before wiring a language server up to it:
    has is silently not drawn, so decorations can be replaced wholesale on every round-trip
    without being checked first.
 
+## Speaking to a language server
+
+Off by default. The `lsp` feature converts a server's positions into the editor's and applies
+its edits; `lsp-types` and `gen-lsp-types` add conversions to and from those crates, so an
+application does not write the mapping itself.
+
+```toml
+matcha = { git = "https://github.com/NickelWenzel/matcha", features = ["lsp-types"] }
+```
+
+Both crates are asked for by range rather than by version, so Cargo settles on whichever copy
+your application already has — which matters, because the two are incompatible and widely used
+crates disagree about which to depend on.
+
+The widget itself is unchanged by any of this. It still takes positions in its own units and
+knows nothing about the protocol; the bridge sits beside it and hands it the same decorations an
+application would build by hand.
+
+```sh
+cargo run --example lsp --features lsp-types
+```
+
+feeds real `publishDiagnostics`, `inlayHint` and `codeAction` payloads through it. Press **1**,
+**2**, **3** to deliver them and **a** to apply the action — edit in between and it is refused,
+because its edits describe text that has moved.
+
 ## Not in scope
 
 - **Virtual text.** Hints are overlays; nothing here pushes code aside to make room.
-- **The LSP protocol,** including UTF-16 ↔ UTF-8 conversion. The widget takes positions already
-  in its own units.
 - **Center and right text alignment.** `text::Alignment::Default` only: the fork history of
   `Buffer::hit` is evidence enough that alignment makes hit-testing subtle, and the decoration
   geometry assumes a left origin throughout.

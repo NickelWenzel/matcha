@@ -74,10 +74,10 @@
 //! UTF-16 code unit, not a grapheme, and not a column: `Position { line: 0,
 //! index: 3 }` is three bytes into line 0, which is one `é` and one `l`.
 //!
-//! The Language Server Protocol counts in UTF-16 by default, and converting is
-//! the application's job. matcha has no `lsp-types` dependency and no opinion
-//! about the protocol — it takes positions in the units the text is stored in
-//! and leaves the wire format to whatever speaks it.
+//! The Language Server Protocol counts in UTF-16 by default. The widget still
+//! takes positions in the units the text is stored in and knows nothing about
+//! the protocol; converting happens beside it, in `matcha::lsp`, behind a feature
+//! that is off unless asked for.
 //!
 //! # Inlay hints are opaque overlays
 //!
@@ -108,6 +108,31 @@
 //! so a position that no longer exists is the ordinary case rather than a bug,
 //! and one that panicked would make every round-trip a race to lose. Nothing
 //! has to be clamped, checked, or shifted before being handed over.
+//!
+//! Two things get called stale and only one of them is this. A position that
+//! **no longer resolves** is the case above: harmless, and gone by the next
+//! publish. A position that **still resolves and now means something else** is
+//! not, because nothing about the result looks wrong afterwards. That is
+//! survivable for a decoration, which is replaced whole on the next round trip,
+//! and is not survivable for an edit, which changes the wrong bytes. So
+//! `Content::apply` takes the `Content::revision` the request was sent at and
+//! refuses a buffer that has moved since, while decorations go on being
+//! ignored.
+//!
+//! # Speaking to a language server
+//!
+//! Off by default. The `lsp` feature adds `matcha::lsp`, which converts a
+//! server's positions into the editor's and applies its edits; `lsp-types` and
+//! `gen-lsp-types` add conversions to and from those crates, so an application
+//! does not write the mapping itself.
+//!
+//! ```toml
+//! matcha = { git = "...", features = ["lsp-types"] }
+//! ```
+//!
+//! The two crates are asked for by range rather than by version, so Cargo
+//! settles on whichever copy an application already has. `cargo run --example
+//! lsp --features lsp-types` shows real notification payloads going through it.
 //!
 //! # Requirements
 //!

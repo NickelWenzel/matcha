@@ -1660,6 +1660,7 @@ dependencies = [
  "iced",
  "iced_test",
  "lsp-types",
+ "serde_json",
 ]
 
 [[package]]

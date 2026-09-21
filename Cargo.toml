@@ -62,3 +62,14 @@ iced = { git = "https://github.com/iced-rs/iced", rev = "fa3bae52874274c012a27d4
     "fira-sans",
 ] }
 iced_test = { git = "https://github.com/iced-rs/iced", rev = "fa3bae52874274c012a27d4bf11a83c49e1709ae" }
+
+# The `lsp` example reads notification payloads as a server sends them, which
+# needs a JSON parser. A dev-dependency only: nothing in the library
+# deserializes anything, and the library's one dependency is still iced.
+serde_json = "1"
+
+# The crate's first [[example]] block, and it exists because `required-features`
+# has no other spelling. `showcase` and `live` are still found on their own.
+[[example]]
+name = "lsp"
+required-features = ["lsp-types"]
