@@ -1029,6 +1029,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "gen-lsp-types"
+version = "0.11.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b64887ac3a8083427ae935a7296db876871582cd57eac077564f8bc18fa49116"
+dependencies = [
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "generic-array"
 version = "0.14.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1646,6 +1656,7 @@ dependencies = [
 name = "matcha"
 version = "0.1.0"
 dependencies = [
+ "gen-lsp-types",
  "iced",
  "iced_test",
  "lsp-types",

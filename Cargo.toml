@@ -19,6 +19,7 @@ all-features = true
 [features]
 lsp = []
 lsp-types = ["lsp", "dep:lsp-types"]
+gen-lsp-types = ["lsp", "dep:gen-lsp-types"]
 
 # A renderer backend (`wgpu` or `tiny-skia`, both default) is mandatory: without one
 # `iced_renderer::Renderer` resolves to `()`, whose `text::Renderer::Editor` is also `()`,
@@ -41,6 +42,14 @@ iced = { git = "https://github.com/iced-rs/iced", rev = "fa3bae52874274c012a27d4
 # `as_str`, and match a severity on its associated constants. Both are spelled
 # out in `src/code_editor/lsp/from_lsp_types.rs`.
 lsp-types = { version = ">=0.95, <0.98", optional = true }
+
+# A range for the opposite reason: this crate is alive and moves quickly --
+# 0.5 to 0.11 in five months -- so a pin would make matcha ship a breaking
+# release every time it does. Every struct read here is identical across the
+# range. The rule that keeps it that way is to read an integer enum through
+# `u32`: 0.11 added a catch-all variant that 0.9 and 0.10 have no shape for, so
+# an exhaustive match builds at one end and not the other.
+gen-lsp-types = { version = ">=0.9, <0.12", optional = true }
 
 # `fira-sans` embeds a known font so shaped-geometry assertions do not depend on whatever
 # fonts the host machine happens to have. `iced_test` must come from the same git rev as

@@ -33,6 +33,8 @@ pub mod hint;
 pub mod outbound;
 pub mod workspace;
 
+#[cfg(feature = "gen-lsp-types")]
+pub mod from_gen_lsp_types;
 #[cfg(feature = "lsp-types")]
 pub mod from_lsp_types;
 
