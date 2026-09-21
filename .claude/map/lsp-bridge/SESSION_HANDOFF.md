@@ -31,7 +31,7 @@ field; the conversion sits beside it behind a feature nobody gets by default.
 | branch | `lsp_bridge`, cut from `master` at `2533bf9`, **no commits yet** |
 | baseline | 69 unit + 5 behaviour + 2 doctests green; 4 snapshots `#[ignore]`d; clippy and fmt clean |
 | plan | `MAP_PLAN.md` + 13 phase docs, **battle-tested through 6 rounds of critique** |
-| phases done | 4 of 13 |
+| phases done | 5 of 13 |
 
 ## The plan
 
@@ -46,7 +46,7 @@ user's file.
 | 2 | Encoding conversion, the `Bridge`, and `Replacement` | **done** |
 | 3 | Revision counting, and what a converted position means | **done** |
 | 4 | Diagnostics and inlay hints | **done** |
-| 5 | Applying edits: validation and commit | pending |
+| 5 | Applying edits: validation and commit | **done** |
 | 6 | Applying edits: caret and selection | pending |
 | 7 | Workspace edits | pending |
 | 8 | Code actions and the message envelope | pending |
@@ -60,24 +60,21 @@ Phase 2 is the gate. Past it, Phase 4 and Phase 5 are independent; Phase 6 is a
 leaf nothing depends on; Phase 7 needs only Phase 5. Phase 8 is the join.
 Phases 9–10 and 11–12 are independent pairs.
 
-## What to build next — Phase 5
+## What to build next — Phase 6, or Phase 7
 
-Applying edits, and the riskiest phase in the plan. Every rule in
-`MAP_PHASE_5.md` was measured, and three were bugs in earlier drafts that would
-have changed the user's file without saying so.
+**Phase 6 — the caret.** A leaf: nothing depends on it. `Content::apply` leaves
+the caret at the last edit applied and the view scrolled there, which for a
+whole-file reformat means the bottom of the file with the selection gone.
+`MAP_PHASE_6.md` carries the rule transcribed from a probe that agrees with an
+absolute-offset oracle on all thirteen cases, and names the three definitions
+that silently change the answer: the tie-break at an insertion point, that
+"line count" means `split('\n')` rather than `.lines()`, and that the line
+delta is signed.
 
-- **The sort key is `(start, end)`, stable ascending, iterated in reverse.**
-  Sorting by `start` alone loses an insert and replaces the wrong range. A
-  stable *descending* sort reverses several inserts at one position.
-- **Line endings split on `\r\n | \n | \r` and rejoin with the buffer's**, and
-  when the buffer offers no evidence of its convention they are left alone.
-  `Content::new()` reports `LineEnding::None`, whose text is empty, so
-  normalising against it deletes every newline.
-- **Convert through `Bridge::resolve`, not `exact`.** `exact` discards the
-  reason, and three of the error variants need it.
-
-Phase 6 (caret restoration) follows it and is a leaf. Phase 7 needs only
-Phase 5, so it can run beside Phase 6.
+**Phase 7 — workspace edits.** Needs only Phase 5, so it can run beside Phase 6.
+`workspace::Edit` normalises at construction rather than on access, which is
+what lets its accessors hand out borrows, and it needs a `pub(crate)`
+constructor because the conversion modules are siblings rather than children.
 
 ## Residual risk, stated plainly
 

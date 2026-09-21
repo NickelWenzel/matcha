@@ -828,7 +828,32 @@ empty labels and preserves order; a stale line neither draws nor panics;
 `tests/lsp.rs` drives a real widget with converted decorations, which is what
 proves `Vec<Hint<'static>>` satisfies the widget's `&'a [Hint<'a>]` bound.
 
-### Phase 5 — Applying edits: validation and commit
+### Phase 5 — Applying edits: validation and commit — **DONE**
+
+*Every measured rule held, and mutation testing found two things the 23 tests
+did not.*
+
+***The `Lf` fallback gap.*** *The plan's rule — when the buffer shows no line
+ending, do not normalise — was implemented correctly, and the test could not
+tell it from the wrong answer. It inserted `"a\nb"` into a fresh buffer, which
+`Lf` normalisation maps to itself. The case that distinguishes them is `\r\n`
+into a buffer with no convention, where guessing `Lf` silently converts a DOS
+file. Test added.*
+
+***`last_end = end.max(last_end)` is dead logic here.*** *The plan took it from
+helix. Given the batch is sorted by `(start, end)` and reversed ranges are
+already refused, `end < covered` while `start >= covered` implies
+`start >= covered > end >= start`. Removed, with the invariant stated instead.*
+
+*A third survivor was a bad mutation rather than a gap: it rewrote the
+line-ending walk into something equivalent. Re-run against a naive
+`replace('\n', ..)` it is caught by the idempotence test, which is the one that
+matters — a server that knows the file is DOS already sends `\r\n`.*
+
+*`Content::apply` scopes the bridge in a block rather than a helper. The block
+boundary is constraint 8 made visible: `RefCell::borrow_mut` takes `&self`, so a
+bridge still alive at the commit would compile and panic at run time.*
+
 `lsp::Change`, `lsp::Snippet`, `lsp::document::Edit`, `lsp::Error`, and
 `Content::apply`. The caret is left where `Edit::Paste` puts it; Phase 6 fixes
 that.
