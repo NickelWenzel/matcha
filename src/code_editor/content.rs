@@ -13,8 +13,9 @@ use iced::advanced::text::editor::{self, Editor as _};
 /// hints, and the gutter are placed against.
 #[derive(Debug)]
 // The widget is a sibling module, so it needs `pub(super)` to reach the editor at all; a pair
-// of accessors would put two more names on a public type to do the same job.
-pub struct Content(pub(super) RefCell<text::Editor>);
+// of accessors would put two more names on a public type to do the same job. The count of edits
+// is `pub(super)` for the same reason, and is read through `revision`.
+pub struct Content(pub(super) RefCell<text::Editor>, pub(super) u64);
 
 impl Default for Content {
     fn default() -> Self {
@@ -42,12 +43,21 @@ impl Content {
 
     /// Creates a [`Content`] holding the given text.
     pub fn with_text(text: &str) -> Self {
-        Self(RefCell::new(text::Editor::with_text(text)))
+        Self(RefCell::new(text::Editor::with_text(text)), 0)
     }
 
     /// Applies an [`Action`](editor::Action) to the contents.
     pub fn perform(&mut self, action: editor::Action) {
+        // Only an edit counts. The widget publishes every action for the application to feed
+        // back here, so scrolling, clicking and dragging all arrive; counting those would move
+        // the revision on every mouse-move of a drag-select, over text that never changed.
+        let is_edit = action.is_edit();
+
         self.0.borrow_mut().perform(action);
+
+        if is_edit {
+            self.1 += 1;
+        }
     }
 
     /// Moves the cursor to the given position.
@@ -144,6 +154,78 @@ mod tests {
             }
         );
         assert_eq!(content.selection(), None);
+    }
+
+    /// Applying every action the widget can publish, an edit aside.
+    #[cfg(feature = "lsp")]
+    fn perform_everything_but_an_edit(content: &mut Content) {
+        use iced::Point;
+        use iced::advanced::mouse;
+
+        content.perform(editor::Action::Move(editor::Motion::Right));
+        content.perform(editor::Action::Select(editor::Motion::Left));
+        content.perform(editor::Action::SelectWord);
+        content.perform(editor::Action::SelectLine);
+        content.perform(editor::Action::SelectAll);
+        content.perform(editor::Action::Click(
+            Point::ORIGIN,
+            mouse::click::Kind::Single,
+        ));
+        content.perform(editor::Action::Drag(Point::new(10.0, 0.0)));
+        content.perform(editor::Action::Scroll { lines: 3 });
+    }
+
+    #[cfg(feature = "lsp")]
+    #[test]
+    fn a_fresh_content_has_never_been_edited() {
+        assert_eq!(Content::with_text("héllo").revision(), 0);
+        assert_eq!(Content::new().revision(), 0);
+    }
+
+    #[cfg(feature = "lsp")]
+    #[test]
+    fn every_edit_moves_the_revision_and_nothing_else_does() {
+        let mut content = Content::with_text("héllo");
+
+        content.perform(editor::Action::Edit(editor::Edit::Insert('x')));
+        assert_eq!(content.revision(), 1);
+
+        // Undo and redo change the text, so they count too.
+        content.perform(editor::Action::Edit(editor::Edit::Undo));
+        content.perform(editor::Action::Edit(editor::Edit::Redo));
+        assert_eq!(content.revision(), 3);
+
+        // A drag-select publishes a click and a drag per mouse-move. Counting
+        // those would report the text as changed while the user selects it.
+        let unedited = content.revision();
+
+        perform_everything_but_an_edit(&mut content);
+        content.move_to(editor::Cursor {
+            position: Position { line: 0, index: 0 },
+            selection: None,
+        });
+        let _ = (content.text(), content.cursor(), content.line(0));
+
+        assert_eq!(
+            content.revision(),
+            unedited,
+            "only an edit changes the text, so only an edit may count"
+        );
+    }
+
+    #[cfg(feature = "lsp")]
+    #[test]
+    fn a_clone_has_never_been_edited() {
+        let mut content = Content::with_text("héllo");
+
+        content.perform(editor::Action::Edit(editor::Edit::Insert('x')));
+
+        // A revision is a count of edits to one `Content`, and a clone has had
+        // none. Starting it at zero makes a revision recorded before the clone
+        // read as stale, which is the direction that refuses an edit rather
+        // than applying a stale one.
+        assert_eq!(content.clone().revision(), 0);
+        assert_eq!(content.clone().text(), content.text());
     }
 
     #[test]

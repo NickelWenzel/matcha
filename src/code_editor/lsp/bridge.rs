@@ -48,6 +48,29 @@ impl Content {
             encoding,
         }
     }
+
+    /// How many times this content has been edited.
+    ///
+    /// Typing, pasting, undo and redo each move it. Scrolling, clicking,
+    /// dragging and moving the cursor leave it alone, as does reading the text.
+    /// A clone starts again at zero, so a revision means something only against
+    /// the [`Content`] it came from.
+    ///
+    /// Pair it with the document version sent to the server, and hand it back
+    /// when the answer arrives. A server describes the document as it was when
+    /// the request was made, and applying those positions to text that has
+    /// since changed edits the wrong bytes.
+    ///
+    /// ```no_run
+    /// # use matcha::Content;
+    /// # let mut content = Content::with_text("fn main() {}");
+    /// # let version = 0;
+    /// let sent = (version, content.revision());
+    /// // ... the server answers, and `sent.1` says whether the answer still fits.
+    /// ```
+    pub fn revision(&self) -> u64 {
+        self.1
+    }
 }
 
 impl Bridge<'_> {
