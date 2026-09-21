@@ -27,12 +27,17 @@
 //! [`Content::apply`]: crate::Content::apply
 //! [`revision`]: crate::Content::revision
 
+pub mod diagnostic;
+pub mod hint;
+
 mod bridge;
 mod encoding;
 mod position;
 mod replacement;
 
 pub use bridge::Bridge;
+pub use diagnostic::Diagnostic;
 pub use encoding::Encoding;
+pub use hint::Hint;
 pub use position::{Position, Range};
 pub use replacement::Replacement;

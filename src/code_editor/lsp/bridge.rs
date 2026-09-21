@@ -2,14 +2,15 @@
 
 use iced::advanced::text::editor::Editor as _;
 
-use super::{Encoding, Position, Range};
+use super::{Diagnostic, Encoding, Hint, Position, Range};
 use crate::code_editor::content::Content;
-use crate::code_editor::decoration::TextRange;
+use crate::code_editor::decoration::{self, TextRange};
 
 /// Why a position did not land exactly.
 ///
 /// Each variant carries what [`Bridge::clamp`] adjusts with, so adjusting never
 /// costs a second scan of the line.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Reason {
     /// The line is past the end of the buffer.
     Line,
@@ -17,6 +18,86 @@ pub(crate) enum Reason {
     Column { length: usize },
     /// The column is inside a character that starts at this byte.
     NotACharBoundary { floor: usize },
+}
+
+/// Walks one line, answering columns in the order it is asked for.
+///
+/// Asking in ascending order walks the line once, which is what the batch
+/// conversions do. Asking out of order is answered correctly and costs a
+/// restart.
+struct Columns<'a> {
+    text: &'a str,
+    encoding: Encoding,
+    /// Whether every character is one byte and one unit, whatever the encoding.
+    ascii: bool,
+    /// The byte the next character starts at, and the column at that byte.
+    byte: usize,
+    units: u32,
+}
+
+impl<'a> Columns<'a> {
+    fn new(text: &'a str, encoding: Encoding) -> Self {
+        Self {
+            ascii: text.is_ascii(),
+            text,
+            encoding,
+            byte: 0,
+            units: 0,
+        }
+    }
+
+    fn byte_at(&mut self, character: u32) -> Result<usize, Reason> {
+        // Source is mostly ASCII, and `is_ascii` is one vectorised pass, so the
+        // walk below is the uncommon path.
+        if self.ascii {
+            let index = character as usize;
+
+            return if index <= self.text.len() {
+                Ok(index)
+            } else {
+                Err(Reason::Column {
+                    length: self.text.len(),
+                })
+            };
+        }
+
+        if character < self.units {
+            self.byte = 0;
+            self.units = 0;
+        }
+
+        while self.units < character {
+            let Some(next) = self.text[self.byte..].chars().next() else {
+                return Err(Reason::Column {
+                    length: self.text.len(),
+                });
+            };
+            let width = self.encoding.width(next);
+
+            // Passing the column without landing on it means the column points
+            // between the units of `next`, which UTF-16 allows for anything
+            // outside the basic plane.
+            if self.units + width > character {
+                return Err(Reason::NotACharBoundary { floor: self.byte });
+            }
+
+            self.units += width;
+            self.byte += next.len_utf8();
+        }
+
+        Ok(self.byte)
+    }
+}
+
+/// Where [`Bridge::clamp`] puts a column that did not land.
+fn clamped(reason: &Reason) -> usize {
+    match reason {
+        Reason::NotACharBoundary { floor } => *floor,
+        Reason::Column { length } => *length,
+        // A line is resolved before any of its columns are, so no column can
+        // report one.
+        Reason::Line => 0,
+    }
 }
 
 /// Converts positions between a language server's coordinates and the editor's.
@@ -88,22 +169,14 @@ impl Bridge<'_> {
     pub fn clamp(&self, from: Position) -> crate::Position {
         match self.resolve(from) {
             Ok(position) => position,
-            Err(Reason::NotACharBoundary { floor }) => crate::Position {
-                line: from.line as usize,
-                index: floor,
-            },
-            Err(Reason::Column { length }) => crate::Position {
-                line: from.line as usize,
-                index: length,
-            },
             // The line number passes through, and the column does not. Holding
             // the line keeps the position out of every visible row, so the
             // widget ignores it the way it ignores any line it does not have.
             // Moving it to the end of the buffer instead would put a squiggle
             // under whatever happens to be on the last line.
-            Err(Reason::Line) => crate::Position {
+            Err(reason) => crate::Position {
                 line: from.line as usize,
-                index: 0,
+                index: clamped(&reason),
             },
         }
     }
@@ -177,6 +250,146 @@ impl Bridge<'_> {
         })
     }
 
+    /// Converts diagnostics for [`CodeEditor::diagnostics`].
+    ///
+    /// The result has one entry per diagnostic, in the same order, so entry `n`
+    /// answers diagnostic `n`. Nothing is dropped. That correspondence is worth
+    /// relying on: the widget draws a squiggle and no text, so an application
+    /// showing a message keeps these diagnostics alongside what it hands the
+    /// widget, and a result that skipped one would put the two out of step.
+    ///
+    /// A diagnostic on a line the buffer no longer has still gets an entry, and
+    /// that entry draws nothing.
+    ///
+    /// [`CodeEditor::diagnostics`]: crate::CodeEditor::diagnostics
+    pub fn diagnostics(&self, from: &[Diagnostic]) -> Vec<decoration::diagnostic::Diagnostic> {
+        let lines = self.content.0.borrow().line_count();
+        let wanted: Vec<Position> = from
+            .iter()
+            .flat_map(|diagnostic| [diagnostic.range.start, diagnostic.range.end])
+            .collect();
+        let at = self.clamp_all(&wanted);
+
+        from.iter()
+            .enumerate()
+            .map(|(index, diagnostic)| {
+                let (start, end) = (diagnostic.range.start.line, diagnostic.range.end.line);
+
+                let range = if start.max(end) as usize > lines {
+                    // Both endpoints onto the line the buffer does not have, so
+                    // the widget's own filter finds no row to draw on. Clamping
+                    // them separately would leave a live start and an end at
+                    // the bottom of the file, and underline everything between.
+                    let past = crate::Position {
+                        line: start.max(end) as usize,
+                        index: 0,
+                    };
+
+                    TextRange::new(past, past)
+                } else {
+                    TextRange::new(at[index * 2], at[index * 2 + 1])
+                };
+
+                decoration::diagnostic::Diagnostic {
+                    range,
+                    severity: diagnostic.severity,
+                }
+            })
+            .collect()
+    }
+
+    /// Converts inlay hints for [`CodeEditor::inlay_hints`].
+    ///
+    /// A hint whose label is empty is left out, so the result can be shorter
+    /// than its input. That is the one thing dropped here, and it is about the
+    /// label rather than the position: a chip is sized from its label, and an
+    /// empty one paints a box over the code and shifts the next chip along the
+    /// row without showing anything.
+    ///
+    /// Order is kept and nothing is sorted. The widget orders chips by where
+    /// they end up on screen, which follows wrapped lines that a sort by line
+    /// and column would not.
+    ///
+    /// [`CodeEditor::inlay_hints`]: crate::CodeEditor::inlay_hints
+    pub fn hints(&self, from: &[Hint]) -> Vec<decoration::inlay::Hint<'static>> {
+        let wanted: Vec<Position> = from.iter().map(|hint| hint.position).collect();
+        let at = self.clamp_all(&wanted);
+
+        from.iter()
+            .zip(at)
+            .filter(|(hint, _)| !hint.label.is_empty())
+            .map(|(hint, position)| decoration::inlay::Hint {
+                position,
+                // Owned, so the labels outlive this call and satisfy the
+                // widget's borrow of them. A borrow of `from` could not: an
+                // application cannot hold the hints and the widget that borrows
+                // them in one struct.
+                label: hint.label.clone().into(),
+            })
+            .collect()
+    }
+
+    /// Clamps many positions, walking each line they name once.
+    ///
+    /// Converting them one at a time re-reads the line from its start every
+    /// time, which a few thousand diagnostics on one long line turn into
+    /// hundreds of megabytes of scanning.
+    fn clamp_all(&self, wanted: &[Position]) -> Vec<crate::Position> {
+        let mut order: Vec<usize> = (0..wanted.len()).collect();
+        order.sort_unstable_by_key(|&index| (wanted[index].line, wanted[index].character));
+
+        let mut out = vec![crate::Position { line: 0, index: 0 }; wanted.len()];
+        let editor = self.content.0.borrow();
+        let lines = editor.line_count();
+        let mut rest = order.as_slice();
+
+        while let Some(&first) = rest.first() {
+            let line = wanted[first].line;
+            let (here, tail) = rest.split_at(rest.partition_point(|&i| wanted[i].line == line));
+            rest = tail;
+
+            let Some(text) = editor.line(line as usize).map(|text| text.text) else {
+                // The line after the last one is how a server spells the end of
+                // the document. Anything past that keeps its number and loses
+                // its column, as it does in `clamp`.
+                let past = if line as usize == lines {
+                    let last = lines.saturating_sub(1);
+
+                    crate::Position {
+                        line: last,
+                        index: editor.line(last).map_or(0, |text| text.text.len()),
+                    }
+                } else {
+                    crate::Position {
+                        line: line as usize,
+                        index: 0,
+                    }
+                };
+
+                for &index in here {
+                    out[index] = past;
+                }
+
+                continue;
+            };
+
+            let mut columns = Columns::new(&text, self.encoding);
+
+            // Ascending, because `order` sorted them that way, so the line is
+            // read once however many positions name it.
+            for &index in here {
+                out[index] = crate::Position {
+                    line: line as usize,
+                    index: columns
+                        .byte_at(wanted[index].character)
+                        .unwrap_or_else(|reason| clamped(&reason)),
+                };
+            }
+        }
+
+        out
+    }
+
     /// The one scan of the line. [`clamp`](Self::clamp) and
     /// [`exact`](Self::exact) differ only in what they do with a [`Reason`].
     pub(crate) fn resolve(&self, from: Position) -> Result<crate::Position, Reason> {
@@ -198,50 +411,18 @@ impl Bridge<'_> {
 
         let text = editor.line(line).ok_or(Reason::Line)?.text;
 
-        // Every column is a byte offset on an ASCII line, whatever the server
-        // counts in. `is_ascii` is one vectorised pass and source is mostly
-        // ASCII, so the walk below is the uncommon path.
-        if text.is_ascii() {
-            let index = from.character as usize;
-
-            return if index <= text.len() {
-                Ok(crate::Position { line, index })
-            } else {
-                Err(Reason::Column { length: text.len() })
-            };
-        }
-
-        let mut units = 0;
-
-        for (index, character) in text.char_indices() {
-            if units == from.character {
-                return Ok(crate::Position { line, index });
-            }
-
-            units += self.encoding.width(character);
-
-            // Passing the column without landing on it means the column points
-            // between the units of `character`, which UTF-16 allows for
-            // anything outside the basic plane.
-            if units > from.character {
-                return Err(Reason::NotACharBoundary { floor: index });
-            }
-        }
-
-        if units == from.character {
-            Ok(crate::Position {
-                line,
-                index: text.len(),
-            })
-        } else {
-            Err(Reason::Column { length: text.len() })
-        }
+        Ok(crate::Position {
+            line,
+            index: Columns::new(&text, self.encoding).byte_at(from.character)?,
+        })
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    use crate::code_editor::decoration::diagnostic::Severity;
 
     /// The multibyte text the geometry tests use: two bytes per character, then
     /// three, then a grapheme cluster of twenty-five.
@@ -449,6 +630,201 @@ mod tests {
                 }
             }
         }
+    }
+
+    fn diagnostic(range: Range, severity: Severity) -> Diagnostic {
+        Diagnostic {
+            range,
+            severity,
+            message: String::new(),
+            source: None,
+            code: None,
+            code_description: None,
+            tags: Vec::new(),
+            related: Vec::new(),
+            data: None,
+        }
+    }
+
+    fn hint(line: u32, character: u32, label: &str) -> Hint {
+        Hint {
+            position: at(line, character),
+            label: label.to_owned(),
+            kind: None,
+            padding_left: false,
+            padding_right: false,
+            tooltip: None,
+            text_edits: Vec::new(),
+            data: None,
+        }
+    }
+
+    /// The one property that makes a second, faster path safe to have.
+    #[test]
+    fn converting_a_batch_answers_exactly_what_converting_one_at_a_time_does() {
+        let content = Content::with_text(MULTIBYTE);
+
+        // Every column of every line, a few past the end of each, the line a
+        // server uses for the end of the document, and one well past it.
+        let mut wanted = Vec::new();
+        for line in 0..=4 {
+            for character in 0..30 {
+                wanted.push(at(line, character));
+            }
+        }
+        wanted.push(at(0, u32::MAX));
+
+        for encoding in ENCODINGS {
+            let bridge = content.lsp(encoding);
+            let one_at_a_time: Vec<_> = wanted.iter().map(|&p| bridge.clamp(p)).collect();
+
+            assert_eq!(bridge.clamp_all(&wanted), one_at_a_time, "{encoding:?}");
+
+            // The batch sorts internally, so the order it is handed must not
+            // change any answer.
+            let mut backwards = wanted.clone();
+            backwards.reverse();
+
+            let mut expected = one_at_a_time.clone();
+            expected.reverse();
+
+            assert_eq!(bridge.clamp_all(&backwards), expected, "{encoding:?}");
+        }
+    }
+
+    #[test]
+    fn a_line_is_read_again_when_its_columns_are_asked_for_out_of_order() {
+        let mut columns = Columns::new("a😀b", Encoding::Utf16);
+
+        assert_eq!(columns.byte_at(3), Ok(5));
+        assert_eq!(
+            columns.byte_at(1),
+            Ok(1),
+            "walking backwards restarts rather than answering from the middle"
+        );
+        assert_eq!(columns.byte_at(3), Ok(5));
+    }
+
+    #[test]
+    fn a_later_column_never_resolves_to_an_earlier_byte() {
+        let text = MULTIBYTE.lines().next().expect("the fixture has a line");
+        let mut columns = Columns::new(text, Encoding::Utf16);
+        let mut last = 0;
+
+        for character in 0..12 {
+            let index = columns.byte_at(character).unwrap_or(text.len());
+
+            assert!(index >= last, "column {character} went backwards");
+            last = index;
+        }
+    }
+
+    #[test]
+    fn every_diagnostic_gets_an_entry_and_keeps_its_place() {
+        let content = Content::with_text(
+            "alpha
+beta
+gamma",
+        );
+        let bridge = content.lsp(Encoding::Utf16);
+
+        let from = [
+            diagnostic(
+                Range {
+                    start: at(0, 1),
+                    end: at(0, 3),
+                },
+                Severity::Warning,
+            ),
+            // On a line the buffer does not have.
+            diagnostic(
+                Range {
+                    start: at(4000, 0),
+                    end: at(4000, 2),
+                },
+                Severity::Error,
+            ),
+            diagnostic(
+                Range {
+                    start: at(2, 0),
+                    end: at(2, 5),
+                },
+                Severity::Hint,
+            ),
+        ];
+
+        let converted = bridge.diagnostics(&from);
+
+        assert_eq!(
+            converted.len(),
+            from.len(),
+            "an application keeps its own diagnostics alongside these, and \
+             matches them up by position in the list"
+        );
+        assert_eq!(converted[0].severity, Severity::Warning);
+        assert_eq!(converted[1].severity, Severity::Error);
+        assert_eq!(converted[2].severity, Severity::Hint);
+    }
+
+    #[test]
+    fn a_diagnostic_that_outruns_the_buffer_covers_no_line_that_exists() {
+        let content = Content::with_text(
+            "alpha
+beta
+gamma",
+        );
+        let bridge = content.lsp(Encoding::Utf16);
+
+        // A live start and a stale end. Clamping the two separately would put
+        // the end at the bottom of the file and underline everything between.
+        let converted = bridge.diagnostics(&[diagnostic(
+            Range {
+                start: at(0, 1),
+                end: at(4000, 0),
+            },
+            Severity::Error,
+        )]);
+
+        let range = converted[0].range;
+
+        assert_eq!(range.start(), range.end());
+        assert!(
+            range.start().line >= content.line_count(),
+            "both endpoints have to sit off the end, or the widget draws it"
+        );
+    }
+
+    #[test]
+    fn a_hint_without_a_label_is_left_out_and_the_rest_keep_their_order() {
+        let content = Content::with_text(
+            "alpha
+beta",
+        );
+        let bridge = content.lsp(Encoding::Utf16);
+
+        // Deliberately not in position order: the widget sorts by where a chip
+        // lands on screen, which follows wrapping, so sorting here would only
+        // break the correspondence with the labels.
+        let converted = bridge.hints(&[hint(1, 2, "second"), hint(0, 1, "first"), hint(0, 3, "")]);
+
+        assert_eq!(
+            converted.len(),
+            2,
+            "the empty label is the only one dropped"
+        );
+        assert_eq!(converted[0].label, "second");
+        assert_eq!(converted[1].label, "first");
+    }
+
+    #[test]
+    fn a_hint_on_a_line_the_buffer_lost_is_still_converted() {
+        let content = Content::with_text("alpha");
+        let bridge = content.lsp(Encoding::Utf16);
+
+        let converted = bridge.hints(&[hint(4000, 0, "stale")]);
+
+        assert_eq!(converted.len(), 1, "only an empty label is dropped");
+        assert!(converted[0].position.line >= content.line_count());
     }
 
     #[test]
