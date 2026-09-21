@@ -1155,6 +1155,27 @@ the version pinning **and** anything else uncommitted in it. Add the dependency
 and commit its lockfile entries first, then run the range check against that
 committed state.*
 
+### Phase 11 — `gen-lsp-types`, inbound — **DONE**
+
+*Builds, lints and tests at 0.9.0, 0.10.0 and 0.11.0, lockfile restored. The
+two rules that make that true are the **opposite** of Phase 9's, and both were
+read out of the source rather than assumed: `to_string` for a URI because there
+is no `as_str` and nothing to deref to, and `u32::from` for an integer enum
+because 0.11 added a catch-all that 0.9 has no shape for.*
+
+*A third asymmetry, beyond the two already recorded: a delete's `annotation_id`
+sits on the **operation** here and on the **options** in `lsp-types`. Exactly
+inverted between the families.*
+
+*`Command::tooltip` and `CodeAction::tags` exist only here. Neither is carried:
+a field in the shared types that can never survive a trip through the other
+family would be a promise matcha cannot keep.*
+
+*One test could not be written. A severity outside the four the protocol names
+needs the `Custom` variant to construct, and that only exists at 0.11, so the
+test would fail to build at the other end of the range — the same reason the
+conversion goes through `u32` at all.*
+
 ### Phases 9 and 11 — inbound conversions
 `From<lsp_types::X> for lsp::X` (Phase 9) and the same for `gen_lsp_types`
 (Phase 11), plus `PositionEncodingKind → Encoding`. Each phase adds its own
