@@ -32,17 +32,21 @@ pub mod document;
 pub mod hint;
 pub mod workspace;
 
+mod action;
 mod apply;
 mod bridge;
 mod encoding;
 mod error;
+mod message;
 mod position;
 mod replacement;
 
+pub use action::{CodeAction, Command, Offer};
 pub use bridge::Bridge;
 pub use diagnostic::Diagnostic;
 pub use encoding::Encoding;
 pub use error::Error;
 pub use hint::Hint;
+pub use message::Message;
 pub use position::{Position, Range};
 pub use replacement::{Change, Replacement, Snippet};
