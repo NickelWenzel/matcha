@@ -37,8 +37,14 @@ impl Content {
     /// changes nothing, and it is what stops the one that does not from
     /// leaving a file with both.
     ///
-    /// The caret is not where it was. It ends up at the last edit applied, and
-    /// the view scrolls to it.
+    /// The caret keeps its place. Text before an edit does not move, text
+    /// after it moves with the edit, and a caret inside replaced text keeps its
+    /// offset into it, so a reformat that leaves the shape of the code alone
+    /// leaves the caret on the same line. A selection is carried the same way
+    /// and dropped if it collapses.
+    ///
+    /// The view does not follow. It stays where the topmost edit put it, so
+    /// what changed is on screen while the caret is back where it was.
     ///
     /// # Errors
     ///
@@ -131,7 +137,17 @@ impl Content {
         // described in coordinates the earlier ones have not moved. It also
         // leaves the topmost edit applied last, which is the one the
         // highlighter re-reads from.
+        // Read once. Every `move_to` below overwrites it, so the only chance
+        // to know where the caret was is before the first of them.
+        let mut caret = self.cursor();
+
         for step in plan.into_iter().rev() {
+            // Each edit moves the caret by its own geometry alone, and the
+            // edits are disjoint and applied from the end, so text an earlier
+            // one describes has not moved yet when its turn comes.
+            caret.position = adjusted(caret.position, &step);
+            caret.selection = caret.selection.map(|anchor| adjusted(anchor, &step));
+
             self.move_to(editor::Cursor {
                 position: step.start,
                 selection: Some(step.end),
@@ -140,6 +156,11 @@ impl Content {
                 step.text,
             ))));
         }
+
+        self.move_to(editor::Cursor {
+            position: caret.position,
+            selection: caret.selection.filter(|anchor| *anchor != caret.position),
+        });
 
         Ok(self.1)
     }
@@ -168,6 +189,84 @@ fn resolved(
             position: from,
         },
     })
+}
+
+/// Where `caret` ends up once `step` is applied.
+fn adjusted(caret: crate::Position, step: &Planned) -> crate::Position {
+    // Split rather than `lines`: "x\n" ends one line and starts another, and a
+    // formatter that adds a trailing newline is the ordinary case.
+    let lines: Vec<&str> = step.text.split('\n').collect();
+    let last = lines.last().copied().unwrap_or_default();
+
+    // Only a replacement of one line continues the line it started on.
+    let end_index = if lines.len() == 1 {
+        step.start.index + last.len()
+    } else {
+        last.len()
+    };
+
+    if caret < step.start {
+        return caret;
+    }
+
+    // At the end counts as after it, so an insertion at the caret leaves the
+    // caret past what it inserted. That is what accepting an inlay hint should
+    // feel like, and what every editor does.
+    if caret >= step.end {
+        // Signed: a replacement with fewer lines than it covers moves
+        // everything below it up.
+        let moved =
+            (lines.len() as isize - 1) - (step.end.line as isize - step.start.line as isize);
+
+        return crate::Position {
+            line: caret.line.saturating_add_signed(moved),
+            // A line below the replacement keeps its columns. The line the
+            // replacement ends on carries what followed it.
+            index: if caret.line == step.end.line {
+                end_index + (caret.index - step.end.index)
+            } else {
+                caret.index
+            },
+        };
+    }
+
+    // Inside the replaced text. Keeping the offset into it, rather than pinning
+    // the caret to either end, is what leaves a reformat feeling like nothing
+    // moved: pinning to the end would put every caret at the end of the file,
+    // because a whole-file reformat is one edit over the whole file.
+    let row = caret.line - step.start.line;
+
+    let Some(text) = lines.get(row) else {
+        // The replacement is shorter than what it replaced, and the line the
+        // caret was on is gone.
+        return crate::Position {
+            line: step.start.line + lines.len() - 1,
+            index: end_index,
+        };
+    };
+
+    // The first line of a replacement starts partway along its line; the rest
+    // start at the beginning of theirs.
+    let base = if row == 0 { step.start.index } else { 0 };
+
+    crate::Position {
+        line: step.start.line + row,
+        // An old column measured against new text lands anywhere, and `move_to`
+        // stores what it is given: a column inside a character would panic on
+        // the next keystroke rather than here.
+        index: base + floored(text, caret.index - base),
+    }
+}
+
+/// The last character boundary of `text` at or before `index`.
+fn floored(text: &str, index: usize) -> usize {
+    let mut index = index.min(text.len());
+
+    while index > 0 && !text.is_char_boundary(index) {
+        index -= 1;
+    }
+
+    index
 }
 
 /// `text` with its line endings replaced by `ending`.
@@ -248,6 +347,309 @@ mod tests {
 
         assert_eq!(after, text, "a refused batch must change nothing");
         outcome.expect_err("the batch should have been refused")
+    }
+
+    fn planned(start: (usize, usize), end: (usize, usize), text: &str) -> Planned {
+        Planned {
+            edit: 0,
+            start: crate::Position {
+                line: start.0,
+                index: start.1,
+            },
+            end: crate::Position {
+                line: end.0,
+                index: end.1,
+            },
+            text: text.to_owned(),
+        }
+    }
+
+    fn absolute(text: &str, at: crate::Position) -> usize {
+        let start: usize = text
+            .split('\n')
+            .take(at.line)
+            .map(|line| line.len() + 1)
+            .sum();
+
+        start + at.index
+    }
+
+    fn located(text: &str, offset: usize) -> crate::Position {
+        let mut start = 0;
+
+        for (line, content) in text.split('\n').enumerate() {
+            if offset <= start + content.len() {
+                return crate::Position {
+                    line,
+                    index: offset - start,
+                };
+            }
+
+            start += content.len() + 1;
+        }
+
+        crate::Position { line: 0, index: 0 }
+    }
+
+    /// Where the caret ends up, worked out in absolute byte offsets.
+    ///
+    /// The rule under test works in lines and columns, because that is what the
+    /// editor speaks. Offsets are the same question with none of the shape, so
+    /// the two agreeing is worth more than either alone.
+    fn oracle(text: &str, caret: crate::Position, step: &Planned) -> crate::Position {
+        let (start, end) = (absolute(text, step.start), absolute(text, step.end));
+        let at = absolute(text, caret);
+
+        let moved = if at < start {
+            at
+        } else if at >= end {
+            at + step.text.len() - (end - start)
+        } else {
+            start + (at - start).min(step.text.len())
+        };
+
+        let mut after = text.to_owned();
+        after.replace_range(start..end, &step.text);
+
+        let mut index = moved.min(after.len());
+
+        while index > 0 && !after.is_char_boundary(index) {
+            index -= 1;
+        }
+
+        located(&after, index)
+    }
+
+    #[test]
+    fn the_caret_lands_where_counting_bytes_says_it_should() {
+        let cases: &[(&str, &str, (usize, usize), Planned)] = &[
+            (
+                "replace, caret after it",
+                "aa\nbb\ncccccccccc\ndd",
+                (2, 9),
+                planned((2, 3), (2, 7), "XY"),
+            ),
+            (
+                "insert exactly at the caret",
+                "aa\nbb\ncccccccccc",
+                (2, 10),
+                planned((2, 10), (2, 10), "foo"),
+            ),
+            (
+                "insert mid-line at the caret",
+                "aa\nbbbb",
+                (1, 2),
+                planned((1, 2), (1, 2), ": i32"),
+            ),
+            (
+                "caret exactly at the end",
+                "aa\ncccccc",
+                (1, 6),
+                planned((1, 2), (1, 6), "XY"),
+            ),
+            (
+                "caret inside, non-zero start column",
+                "aa\ncccccc",
+                (1, 4),
+                planned((1, 2), (1, 6), "XY"),
+            ),
+            (
+                "many lines to many lines",
+                "aa\nbb\nccc\nddd\neeeee",
+                (4, 5),
+                planned((2, 3), (4, 1), "AB\nCD"),
+            ),
+            (
+                "many lines to one",
+                "aa\nbb\nccc\nddd\neeeee",
+                (4, 5),
+                planned((2, 3), (4, 1), "Z"),
+            ),
+            (
+                "caret strictly before",
+                "aa\nbbbb\ncc",
+                (0, 1),
+                planned((1, 1), (1, 3), "ZZZ"),
+            ),
+            (
+                "trailing newline in the new text",
+                "aa\nbbbb\ncc",
+                (2, 2),
+                planned((1, 0), (1, 4), "x\n"),
+            ),
+            (
+                "whole file, fewer lines",
+                "l0\nl1\nl2\nl3\nl4",
+                (3, 1),
+                planned((0, 0), (4, 2), "n0\nn1"),
+            ),
+            (
+                "whole file, more lines",
+                "l0\nl1",
+                (1, 1),
+                planned((0, 0), (1, 2), "m0\nm1\nm2\nm3"),
+            ),
+            (
+                "caret lands inside a character",
+                "aa\nabcdef",
+                (1, 1),
+                planned((1, 0), (1, 6), "éx"),
+            ),
+            (
+                "multibyte, on boundaries",
+                "aa\nhéllo wörld",
+                (1, 11),
+                planned((1, 1), (1, 3), "e"),
+            ),
+        ];
+
+        for (name, text, caret, step) in cases {
+            let caret = crate::Position {
+                line: caret.0,
+                index: caret.1,
+            };
+
+            assert_eq!(adjusted(caret, step), oracle(text, caret, step), "{name}");
+        }
+    }
+
+    #[test]
+    fn a_whole_file_reformat_leaves_the_caret_on_its_line() {
+        let mut content = Content::with_text("fn a() {}\nfn b() {}\nfn c() {}\nfn d() {}");
+
+        content.move_to(editor::Cursor {
+            position: crate::Position { line: 2, index: 3 },
+            selection: None,
+        });
+
+        // What every formatter sends: one edit over the whole document, ending
+        // on the line after the last.
+        content
+            .apply(
+                &document(vec![replace(
+                    (0, 0),
+                    (4, 0),
+                    "fn a() {}\nfn b() {}\nfn c() {}\nfn d() {}\n",
+                )]),
+                Encoding::Utf16,
+                0,
+            )
+            .expect("the batch should have applied");
+
+        let caret = content.cursor().position;
+
+        assert_eq!(
+            caret.line, 2,
+            "pinning the caret to the end of the replacement puts it at the end \
+             of the file, because the file is the replacement"
+        );
+        assert_eq!(caret.index, 3);
+    }
+
+    #[test]
+    fn the_caret_survives_a_batch_of_several_edits() {
+        let mut content = Content::with_text("ab\ncd\nef");
+
+        content.move_to(editor::Cursor {
+            position: crate::Position { line: 2, index: 1 },
+            selection: None,
+        });
+
+        // Two edits, both above the caret. Every edit made moves the cursor to
+        // where it was made, so anything that reads the cursor after the first
+        // one reads the edit's position rather than the reader's.
+        content
+            .apply(
+                &document(vec![
+                    replace((0, 0), (0, 0), "XXXX"),
+                    replace((1, 0), (1, 0), "YYYY"),
+                ]),
+                Encoding::Utf16,
+                0,
+            )
+            .expect("the batch should have applied");
+
+        assert_eq!(content.text(), "XXXXab\nYYYYcd\nef");
+        assert_eq!(
+            content.cursor().position,
+            crate::Position { line: 2, index: 1 }
+        );
+    }
+
+    #[test]
+    fn an_insertion_at_the_caret_leaves_the_caret_after_it() {
+        let mut content = Content::with_text("let x = 1;");
+
+        content.move_to(editor::Cursor {
+            position: crate::Position { line: 0, index: 5 },
+            selection: None,
+        });
+
+        // Accepting an inlay hint: the annotation goes in and typing carries on
+        // after it.
+        content
+            .apply(
+                &document(vec![replace((0, 5), (0, 5), ": i32")]),
+                Encoding::Utf16,
+                0,
+            )
+            .expect("the batch should have applied");
+
+        assert_eq!(content.text(), "let x: i32 = 1;");
+        assert_eq!(
+            content.cursor().position,
+            crate::Position { line: 0, index: 10 }
+        );
+    }
+
+    #[test]
+    fn a_selection_is_carried_across_an_edit_inside_it() {
+        let mut content = Content::with_text("alpha beta gamma");
+
+        content.move_to(editor::Cursor {
+            position: crate::Position { line: 0, index: 16 },
+            selection: Some(crate::Position { line: 0, index: 0 }),
+        });
+
+        content
+            .apply(
+                &document(vec![replace((0, 6), (0, 10), "X")]),
+                Encoding::Utf16,
+                0,
+            )
+            .expect("the batch should have applied");
+
+        let cursor = content.cursor();
+
+        assert_eq!(content.text(), "alpha X gamma");
+        assert_eq!(cursor.position, crate::Position { line: 0, index: 13 });
+        assert_eq!(
+            cursor.selection,
+            Some(crate::Position { line: 0, index: 0 }),
+            "the anchor sits before the edit, so nothing moves it"
+        );
+    }
+
+    #[test]
+    fn a_selection_that_collapses_onto_the_caret_is_dropped() {
+        let mut content = Content::with_text("alpha beta");
+
+        content.move_to(editor::Cursor {
+            position: crate::Position { line: 0, index: 10 },
+            selection: Some(crate::Position { line: 0, index: 6 }),
+        });
+
+        // The selected text goes, so both ends land in the same place.
+        content
+            .apply(
+                &document(vec![replace((0, 6), (0, 10), "")]),
+                Encoding::Utf16,
+                0,
+            )
+            .expect("the batch should have applied");
+
+        assert_eq!(content.text(), "alpha ");
+        assert_eq!(content.cursor().selection, None);
     }
 
     #[test]
