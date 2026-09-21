@@ -1096,7 +1096,18 @@ two entries separate. (An *inbound conversion* test — real wire fixtures into
 this type — ships in Phase 9; the full round trip needs outbound and is
 Phase 10's.)
 
-### Phase 8 — Code actions and the message envelope
+### Phase 8 — Code actions and the message envelope — **DONE**
+
+*`CodeAction::is_kind` ships rather than only documenting the nesting rule. The
+phase's own spot checks list `refactory` against `refactor` as a mutation test,
+which needs something to mutate — and leaving every consumer to implement a
+rule the docs warn they will get wrong is the glue this feature exists to
+remove. Four mutations of it, all caught.*
+
+*The zero-dependency core is complete at this phase: every payload type, the
+bridge, `Content::apply` and the message envelope, with no dependency beyond
+iced and no suppression anywhere.*
+
 `CodeAction`, `Command`, `Offer`, `Message`.
 
 - **`Offer` is the union.** `textDocument/codeAction` answers with
