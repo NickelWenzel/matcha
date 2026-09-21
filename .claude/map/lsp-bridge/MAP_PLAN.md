@@ -458,9 +458,9 @@ The project forbids composite type names. Applied uniformly:
 | `lsp::hint::Kind` | `InlayHintKind` |
 | `lsp::Replacement` | `TextEdit` |
 | `lsp::Change` | the `TextEdit \| AnnotatedTextEdit \| SnippetTextEdit` union |
-| `lsp::Code` | `NumberOrString` |
-| `lsp::Tag` | `DiagnosticTag` |
-| `lsp::Related` | `DiagnosticRelatedInformation` |
+| `lsp::diagnostic::Code` | `NumberOrString` |
+| `lsp::diagnostic::Tag` | `DiagnosticTag` |
+| `lsp::diagnostic::Related` | `DiagnosticRelatedInformation` |
 | `lsp::Offer` | `CodeActionOrCommand` |
 | `lsp::document::Edit` | `TextDocumentEdit` |
 | `lsp::workspace::Edit` | `WorkspaceEdit` |
@@ -753,7 +753,36 @@ at 0. The doc section exists.
 the counter advances by the number of edits — which is why only equality against
 `expected` is meaningful.)
 
-### Phase 4 — Diagnostics and inlay hints
+### Phase 4 — Diagnostics and inlay hints — **DONE**
+
+*The batch walk did **not** become a second scanner. `Columns` walks one line
+answering columns in the order asked, `Bridge::resolve` asks it once, and the
+batch asks it per line — so there is one implementation, not two that must
+agree. The property that makes that safe is a test:
+`converting_a_batch_answers_exactly_what_converting_one_at_a_time_does`, over
+every column of every line of the multibyte fixture, in all three encodings,
+in both orders.*
+
+***The sort in `clamp_all` is a pure optimization and cannot be
+mutation-tested.*** *Removing it changes no observable behaviour, because
+`byte_at` restarts when asked to go backwards. That is the right design — order
+cannot affect an answer — but it means the one-pass property is not pinned by
+any test, and a correctness test never will pin it. Anyone tempted to "simplify"
+the sort away should know it is load-bearing for speed alone.*
+
+*Naming deviation: `Code`, `Tag` and `Related` are `lsp::diagnostic::*` rather
+than flat, and `Kind` is `lsp::hint::Kind`. The table above said flat for the
+first three. Module-path naming is the crate's rule and `lsp::Tag` does not say
+what it tags. `diagnostic` and `hint` are therefore public modules while
+`position`, `encoding` and `replacement` stay private: a module goes public
+exactly when it has satellites that read badly flat.*
+
+*`Reason` gained `Debug, Clone, Copy, PartialEq, Eq` so tests can assert on it.
+It is `pub(crate)`, so this commits to nothing.*
+
+*For the integration tests: the editor takes focus from a click, so `typewrite`
+before one produces no messages at all.*
+
 `lsp::Diagnostic`, `lsp::Code`, `lsp::Tag`, `lsp::Related`, `lsp::Hint`,
 `lsp::hint::Kind`, and `Bridge`'s two batch methods. Removes Phase 2's
 `#[allow(dead_code)]`.

@@ -31,7 +31,7 @@ field; the conversion sits beside it behind a feature nobody gets by default.
 | branch | `lsp_bridge`, cut from `master` at `2533bf9`, **no commits yet** |
 | baseline | 69 unit + 5 behaviour + 2 doctests green; 4 snapshots `#[ignore]`d; clippy and fmt clean |
 | plan | `MAP_PLAN.md` + 13 phase docs, **battle-tested through 6 rounds of critique** |
-| phases done | 3 of 13 |
+| phases done | 4 of 13 |
 
 ## The plan
 
@@ -45,7 +45,7 @@ user's file.
 | 1 | Feature scaffold | **done** |
 | 2 | Encoding conversion, the `Bridge`, and `Replacement` | **done** |
 | 3 | Revision counting, and what a converted position means | **done** |
-| 4 | Diagnostics and inlay hints | pending |
+| 4 | Diagnostics and inlay hints | **done** |
 | 5 | Applying edits: validation and commit | pending |
 | 6 | Applying edits: caret and selection | pending |
 | 7 | Workspace edits | pending |
@@ -60,26 +60,24 @@ Phase 2 is the gate. Past it, Phase 4 and Phase 5 are independent; Phase 6 is a
 leaf nothing depends on; Phase 7 needs only Phase 5. Phase 8 is the join.
 Phases 9–10 and 11–12 are independent pairs.
 
-## What to build next — Phase 4, or Phase 5
+## What to build next — Phase 5
 
-Phases 4 and 5 are independent and either can go first. Phase 4 is the
-decorations an application can see; Phase 5 is the risky one.
+Applying edits, and the riskiest phase in the plan. Every rule in
+`MAP_PHASE_5.md` was measured, and three were bugs in earlier drafts that would
+have changed the user's file without saying so.
 
-**Phase 4 — diagnostics and inlay hints.** The payload types plus `Bridge`'s two
-batch methods, and it now also owns the single-pass batch walk that Phase 2 was
-originally to have shipped unused. Three things `MAP_PHASE_4.md` pins down:
-`diagnostics()` is total and index-correspondent, because the widget's own
-`Diagnostic` carries no message and an application showing one on hover keeps
-the `lsp::Diagnostic` vector alongside; `hints()` drops only an empty label,
-because the widget paints an opaque chip for one; and neither sorts, because
-`widget.rs:806` already sorts by shaped geometry. It also brings `tests/lsp.rs`,
-which is what proves `Vec<Hint<'static>>` satisfies the widget's
-`&'a [Hint<'a>]` bound.
+- **The sort key is `(start, end)`, stable ascending, iterated in reverse.**
+  Sorting by `start` alone loses an insert and replaces the wrong range. A
+  stable *descending* sort reverses several inserts at one position.
+- **Line endings split on `\r\n | \n | \r` and rejoin with the buffer's**, and
+  when the buffer offers no evidence of its convention they are left alone.
+  `Content::new()` reports `LineEnding::None`, whose text is empty, so
+  normalising against it deletes every newline.
+- **Convert through `Bridge::resolve`, not `exact`.** `exact` discards the
+  reason, and three of the error variants need it.
 
-**Phase 5 — applying edits.** Every rule in it was measured, and three were bugs
-in earlier drafts. The sort key is `(start, end)`, stable ascending, iterated in
-reverse. Line endings split on `\r\n | \n | \r` and rejoin with the buffer's,
-and when the buffer gives no evidence of its convention they are left alone.
+Phase 6 (caret restoration) follows it and is a leaf. Phase 7 needs only
+Phase 5, so it can run beside Phase 6.
 
 ## Residual risk, stated plainly
 
