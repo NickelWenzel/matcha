@@ -1135,6 +1135,26 @@ iced and no suppression anywhere.*
 
 **Exit:** a `Message` round-trips its envelope; `Offer` holds both shapes.
 
+### Phase 9 — `lsp-types`, inbound — **DONE**
+
+*Builds, lints and tests at 0.95.0, 0.96.0 and 0.97.0, one source, lockfile
+restored. `as_str` for URIs and associated constants for severities are what
+make that true.*
+
+*One asymmetry inside `lsp-types` itself, which the Round-3 critique predicted
+and this confirmed: `CreateFile` and `RenameFile` carry `annotation_id` on the
+operation, and `DeleteFile` carries it on its **options**. Neither the crate nor
+the protocol is consistent about it.*
+
+*None of the three options types implements `Default`, so `unwrap_or_default`
+is not available on them; each flag is read through the `Option` and an absent
+one is off.*
+
+*A note on the lockfile: the range check's `git checkout -- Cargo.lock` reverts
+the version pinning **and** anything else uncommitted in it. Add the dependency
+and commit its lockfile entries first, then run the range check against that
+committed state.*
+
 ### Phases 9 and 11 — inbound conversions
 `From<lsp_types::X> for lsp::X` (Phase 9) and the same for `gen_lsp_types`
 (Phase 11), plus `PositionEncodingKind → Encoding`. Each phase adds its own
