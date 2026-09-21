@@ -1233,6 +1233,28 @@ different JSON, so empty collections now go out absent, as they arrived.*
 carries no version, no order and no file operation, so writing to it would
 lose whatever the list was carrying.*
 
+### Phase 12 — `gen-lsp-types`, outbound and client capabilities — **DONE**
+
+*Builds, lints and tests at 0.9.0, 0.10.0 and 0.11.0, lockfile restored. Both
+families' `client_capabilities` coexist under `--all-features`, which is what
+the namespacing decision from Round 4 was for.*
+
+***The integer enums go out by variant name and in through `u32` — the reverse
+of each other, and this was not in the plan.*** *`From<u32>` exists only at
+0.11; 0.9 and 0.10 have `TryFrom`. So building one from a number compiles at
+one end of the range only, while the four names the protocol gives exist at
+both. Reading still has to go through `u32`, because the `Custom` variant that
+makes a match non-exhaustive exists only at 0.11. Each direction is portable
+only the way the other is not.*
+
+*A snippet round-trips here and is refused by `lsp-types`, which is the one
+place the two families differ in what they can express rather than in how.*
+
+*The outbound surface is `TryFrom` throughout, including for the several
+conversions that cannot fail. Some genuinely can — `data` and a command's
+arguments are JSON text that has to parse — and an application switching
+families should not have to switch traits with it.*
+
 ### Phases 10 and 12 — outbound conversions and client capabilities
 `TryFrom<lsp::X> for lsp_types::X` (Phase 10) and for `gen_lsp_types`
 (Phase 12).
