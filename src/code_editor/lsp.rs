@@ -9,8 +9,12 @@
 //! The `lsp-types` and `gen-lsp-types` features add conversions to and from
 //! those crates, so an application does not have to write the mapping itself.
 
+mod bridge;
 mod encoding;
 mod position;
+mod replacement;
 
+pub use bridge::Bridge;
 pub use encoding::Encoding;
 pub use position::{Position, Range};
+pub use replacement::Replacement;
