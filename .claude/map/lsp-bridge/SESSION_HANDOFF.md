@@ -31,7 +31,7 @@ field; the conversion sits beside it behind a feature nobody gets by default.
 | branch | `lsp_bridge`, cut from `master` at `2533bf9`, **no commits yet** |
 | baseline | 69 unit + 5 behaviour + 2 doctests green; 4 snapshots `#[ignore]`d; clippy and fmt clean |
 | plan | `MAP_PLAN.md` + 13 phase docs, **battle-tested through 6 rounds of critique** |
-| phases done | 5 of 13 |
+| phases done | 6 of 13 |
 
 ## The plan
 
@@ -47,7 +47,7 @@ user's file.
 | 3 | Revision counting, and what a converted position means | **done** |
 | 4 | Diagnostics and inlay hints | **done** |
 | 5 | Applying edits: validation and commit | **done** |
-| 6 | Applying edits: caret and selection | pending |
+| 6 | Applying edits: caret and selection | **done** |
 | 7 | Workspace edits | pending |
 | 8 | Code actions and the message envelope | pending |
 | 9 | `lsp-types`, inbound | pending |
@@ -60,21 +60,27 @@ Phase 2 is the gate. Past it, Phase 4 and Phase 5 are independent; Phase 6 is a
 leaf nothing depends on; Phase 7 needs only Phase 5. Phase 8 is the join.
 Phases 9–10 and 11–12 are independent pairs.
 
-## What to build next — Phase 6, or Phase 7
+## What to build next — Phase 7
 
-**Phase 6 — the caret.** A leaf: nothing depends on it. `Content::apply` leaves
-the caret at the last edit applied and the view scrolled there, which for a
-whole-file reformat means the bottom of the file with the selection gone.
-`MAP_PHASE_6.md` carries the rule transcribed from a probe that agrees with an
-absolute-offset oracle on all thirteen cases, and names the three definitions
-that silently change the answer: the tie-break at an insertion point, that
-"line count" means `split('\n')` rather than `.lines()`, and that the line
-delta is signed.
+Workspace edits: the container a code action's edits arrive in. matcha
+represents one in full and applies only the single-document parts, because it
+has no notion of a file.
 
-**Phase 7 — workspace edits.** Needs only Phase 5, so it can run beside Phase 6.
-`workspace::Edit` normalises at construction rather than on access, which is
-what lets its accessors hand out borrows, and it needs a `pub(crate)`
-constructor because the conversion modules are siblings rather than children.
+Three things `MAP_PHASE_7.md` pins down:
+
+- **Normalise at construction, not on access.** `document_changes` supersedes
+  `changes`, and doing that once on the way in is what lets the accessors hand
+  out borrows. An accessor that synthesised entries could not return references
+  to them.
+- **`workspace::Edit::new` is `pub(crate)`.** The fields are private, Rust field
+  privacy is module-scoped, and the conversion modules are siblings rather than
+  children, so Phases 9 and 11 cannot build one without it.
+- **`steps()` is the primary accessor**, over one ordered sequence of edits and
+  resource operations. Create A, edit A, rename A to B, edit B is an ordinary
+  rename refactor, and two separate accessors would lose the order between them.
+
+After that the shape changes: Phases 9 to 12 are conversions to and from the two
+LSP crate families, with the version ranges to check at both ends.
 
 ## Residual risk, stated plainly
 

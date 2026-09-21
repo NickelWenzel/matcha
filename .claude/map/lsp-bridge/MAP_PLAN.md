@@ -917,7 +917,26 @@ column past end-of-line; a mid-character column; a mid-grapheme char boundary
 inside the 25-byte ZWJ family emoji; an edit at EOF; a stale revision; a successful batch advancing `revision()` by its edit count; a
 snippet.
 
-### Phase 6 — Applying edits: caret and selection
+### Phase 6 — Applying edits: caret and selection — **DONE**
+
+*The rule and the oracle were both rebuilt here rather than transcribed from
+the planning probe, and they agree on all thirteen cases. Nine mutations, all
+caught.*
+
+*One test had to be added for a mutation the others could not see: reading the
+cursor **inside** the commit loop rather than before it is invisible with a
+single edit, because the first read happens before anything has moved it. It
+takes a batch of two, where the second read returns the position the first edit
+was made at. `the_caret_survives_a_batch_of_several_edits` is that case.*
+
+*The three definitions the phase doc warned about were each worth their line:
+`split('\n')` rather than `lines()`, a signed line delta, and the exclusive end
+boundary. All three have a mutant that fails a named test.*
+
+*`floored` is needed only where an old column lands on new text — inside a
+replacement. A caret after one keeps a column that was already a boundary, on
+text the edit did not touch, so nothing there can land inside a character.*
+
 
 Self-contained arithmetic over the list Phase 5 already builds, with its own
 tests. Not optional, and **not** the whole-document diff that is out of scope:
