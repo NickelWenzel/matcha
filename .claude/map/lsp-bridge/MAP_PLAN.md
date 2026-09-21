@@ -1046,7 +1046,24 @@ anchor and head fall on opposite sides of one edit; a whole-document reformat
 that preserves line structure leaves the caret on the same logical line and
 never at EOF.
 
-### Phase 7 — Workspace edits
+### Phase 7 — Workspace edits — **DONE**
+
+*Deviation: `workspace::Edit` has `pub(crate)` **fields** rather than a
+`pub(crate) fn new`. The plan asked for a constructor so the sibling conversion
+modules could build one; a constructor with no caller until Phase 9 would have
+needed a suppression, and this crate already answers the same question the same
+way — `Content(pub(super) RefCell<..>)` carries the comment "a pair of
+accessors would put two more names on a public type to do the same job". The
+fields are read by the accessors, so nothing is dead. Verified by compiling a
+construction from a sibling module, since a test inside `workspace.rs` is a
+child and proves nothing about it.*
+
+*The spot checks that need the `document_changes`-over-`changes` precedence
+belong to Phase 9, which is where the normalisation happens. What is testable
+here is what the type promises: order across edits and file operations, a
+document that appears twice staying two batches, and an annotation being
+findable by the identifier an edit carries.*
+
 `workspace::Edit`, `workspace::Step`, `workspace::Operation`,
 `workspace::Annotation`, and the accessors.
 

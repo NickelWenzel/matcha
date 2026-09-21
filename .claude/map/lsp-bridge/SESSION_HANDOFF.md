@@ -31,7 +31,7 @@ field; the conversion sits beside it behind a feature nobody gets by default.
 | branch | `lsp_bridge`, cut from `master` at `2533bf9`, **no commits yet** |
 | baseline | 69 unit + 5 behaviour + 2 doctests green; 4 snapshots `#[ignore]`d; clippy and fmt clean |
 | plan | `MAP_PLAN.md` + 13 phase docs, **battle-tested through 6 rounds of critique** |
-| phases done | 6 of 13 |
+| phases done | 7 of 13 |
 
 ## The plan
 
@@ -48,7 +48,7 @@ user's file.
 | 4 | Diagnostics and inlay hints | **done** |
 | 5 | Applying edits: validation and commit | **done** |
 | 6 | Applying edits: caret and selection | **done** |
-| 7 | Workspace edits | pending |
+| 7 | Workspace edits | **done** |
 | 8 | Code actions and the message envelope | pending |
 | 9 | `lsp-types`, inbound | pending |
 | 10 | `lsp-types`, outbound and client capabilities | pending |
@@ -60,27 +60,24 @@ Phase 2 is the gate. Past it, Phase 4 and Phase 5 are independent; Phase 6 is a
 leaf nothing depends on; Phase 7 needs only Phase 5. Phase 8 is the join.
 Phases 9–10 and 11–12 are independent pairs.
 
-## What to build next — Phase 7
+## What to build next — Phase 8
 
-Workspace edits: the container a code action's edits arrive in. matcha
-represents one in full and applies only the single-document parts, because it
-has no notion of a file.
+Code actions and the message envelope: `CodeAction`, `Command`, `Offer` and
+`Message`. The last of the payload types, and the phase that finishes the
+zero-dependency core.
 
-Three things `MAP_PHASE_7.md` pins down:
+- **`Offer` is the union.** `textDocument/codeAction` answers with a list of
+  either shape, so a list of `CodeAction` has nowhere to put a `Command`.
+- **`Message` carries the envelope**, not just the payload. An application with
+  two buffers cannot route a diagnostics message that kept only the middle field
+  of `{ uri, diagnostics, version }`.
+- **`kind` matching is hierarchical**: `refactor.extract` matches a request for
+  `refactor`, and `refactory` does not. Document it beside the field, because
+  every consumer that reaches for `starts_with` gets it wrong.
 
-- **Normalise at construction, not on access.** `document_changes` supersedes
-  `changes`, and doing that once on the way in is what lets the accessors hand
-  out borrows. An accessor that synthesised entries could not return references
-  to them.
-- **`workspace::Edit::new` is `pub(crate)`.** The fields are private, Rust field
-  privacy is module-scoped, and the conversion modules are siblings rather than
-  children, so Phases 9 and 11 cannot build one without it.
-- **`steps()` is the primary accessor**, over one ordered sequence of edits and
-  resource operations. Create A, edit A, rename A to B, edit B is an ordinary
-  rename refactor, and two separate accessors would lose the order between them.
-
-After that the shape changes: Phases 9 to 12 are conversions to and from the two
-LSP crate families, with the version ranges to check at both ends.
+Phase 8 is the join: `CodeAction` carries both `Vec<Diagnostic>` from Phase 4
+and `workspace::Edit` from Phase 7. After it the shape changes -- Phases 9 to 12
+are the conversions, each with a version range to build at both ends of.
 
 ## Residual risk, stated plainly
 
