@@ -30,6 +30,7 @@
 pub mod diagnostic;
 pub mod document;
 pub mod hint;
+pub mod workspace;
 
 mod apply;
 mod bridge;
