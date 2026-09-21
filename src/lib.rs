@@ -139,3 +139,6 @@ pub use code_editor::{
     Action, Binding, CodeEditor, Content, Cursor, Edit, KeyPress, Line, LineEnding, Motion,
     Position, Selection, code_editor, decoration, gutter,
 };
+
+#[cfg(feature = "lsp")]
+pub use code_editor::lsp;

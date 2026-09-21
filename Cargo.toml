@@ -7,6 +7,18 @@ license = "MIT"
 description = "A code editor widget for iced with diagnostics, inlay hints, and a line-number gutter"
 repository = "https://github.com/NickelWenzel/matcha"
 
+# Without this, docs.rs renders none of the feature-gated modules, which is all
+# of the LSP bridge.
+[package.metadata.docs.rs]
+all-features = true
+
+# The LSP bridge is optional and additive. `lsp` itself pulls in nothing: the
+# application hands over values it has already decoded, so nothing here
+# deserializes and the feature costs no dependency at all. What it gates is API
+# surface, which is the honest reason rather than dependency weight.
+[features]
+lsp = []
+
 # A renderer backend (`wgpu` or `tiny-skia`, both default) is mandatory: without one
 # `iced_renderer::Renderer` resolves to `()`, whose `text::Renderer::Editor` is also `()`,
 # and the widget's `Renderer::Editor = graphics::text::Editor` bound stops typechecking.

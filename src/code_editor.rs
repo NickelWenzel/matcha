@@ -3,6 +3,13 @@
 pub mod decoration;
 pub mod gutter;
 
+// Behind a feature because it is a whole second vocabulary — the protocol's
+// coordinates, its diagnostics, its edits — that an application not talking to
+// a language server has no use for. It costs no dependency; what it gates is
+// the API surface.
+#[cfg(feature = "lsp")]
+pub mod lsp;
+
 // Not public: every function here takes the `cosmic_text::Buffer` behind a `Content`, and
 // `Content` keeps its editor `pub(super)`, so no caller outside the crate can obtain one. It
 // was `pub` only to keep `dead_code` quiet while it had no callers; the widget now calls all
