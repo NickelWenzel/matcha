@@ -31,8 +31,8 @@ jobs:
         run: cargo test --workspace --all-features
 
       # The tree-sitter backend alone, with syntect out of the build.
-      - name: Test scrive-core and scrive-iced (tree-sitter only)
-        run: cargo test -p scrive-core -p scrive-iced --no-default-features --features tree-sitter
+      - name: Test matcha-core and matcha-iced (tree-sitter only)
+        run: cargo test -p matcha-core -p matcha-iced --no-default-features --features tree-sitter
 
   wasm:
     name: Wasm
@@ -58,29 +58,29 @@ jobs:
       - name: Build for wasm32-unknown-unknown
         run: cargo build --workspace --all-targets --all-features --target wasm32-unknown-unknown
 
-      # scrive-lsp with only its WebSocket feature: the workspace build above
+      # matcha-lsp with only its WebSocket feature: the workspace build above
       # unifies features across crates, which can hide a missing target gate.
-      - name: Build scrive-lsp's browser WebSocket transport alone
-        run: cargo build -p scrive-lsp --no-default-features --features websocket --target wasm32-unknown-unknown
+      - name: Build matcha-lsp's browser WebSocket transport alone
+        run: cargo build -p matcha-lsp --no-default-features --features websocket --target wasm32-unknown-unknown
 
       # The browser-only code (the memory poll, the WebSocket wrapper) compiles
       # only for this target; lint it there.
-      - name: Clippy scrive-lsp for wasm32-unknown-unknown (no warnings)
-        run: cargo clippy -p scrive-lsp --all-features --target wasm32-unknown-unknown -- -D warnings
+      - name: Clippy matcha-lsp for wasm32-unknown-unknown (no warnings)
+        run: cargo clippy -p matcha-lsp --all-features --target wasm32-unknown-unknown -- -D warnings
 
       # The tree-sitter backend runs in the browser target, with no imports.
       - name: Run the tree-sitter wasm smoke test
         run: node scripts/wasm-smoke.mjs target/wasm32-unknown-unknown/debug/examples/wasm_smoke.wasm
 
       # The GUI-free core runs its unit tests as wasm (32-bit usize, no threads).
-      - name: Test scrive-core on wasm32-wasip1
-        run: cargo test -p scrive-core --lib --target wasm32-wasip1
+      - name: Test matcha-core on wasm32-wasip1
+        run: cargo test -p matcha-core --lib --target wasm32-wasip1
         env:
           CARGO_TARGET_WASM32_WASIP1_RUNNER: wasmtime
 
       # The LSP client is headless too; its unit tests run as wasm the same way.
-      - name: Test scrive-lsp on wasm32-wasip1
-        run: cargo test -p scrive-lsp --lib --target wasm32-wasip1
+      - name: Test matcha-lsp on wasm32-wasip1
+        run: cargo test -p matcha-lsp --lib --target wasm32-wasip1
         env:
           CARGO_TARGET_WASM32_WASIP1_RUNNER: wasmtime
 
@@ -103,10 +103,10 @@ jobs:
 
       # The highlight backends are features; lint the builds that drop syntect.
       - name: Clippy, no highlight backend (no warnings)
-        run: cargo clippy -p scrive-core -p scrive-iced --all-targets --no-default-features -- -D warnings
+        run: cargo clippy -p matcha-core -p matcha-iced --all-targets --no-default-features -- -D warnings
 
       - name: Clippy, tree-sitter only (no warnings)
-        run: cargo clippy -p scrive-core -p scrive-iced --all-targets --no-default-features --features tree-sitter -- -D warnings
+        run: cargo clippy -p matcha-core -p matcha-iced --all-targets --no-default-features --features tree-sitter -- -D warnings
 
       # Missing docs and broken intra-doc links are denied at the crate level;
       # this catches every other rustdoc warning.
@@ -124,7 +124,7 @@ jobs:
 
       # Docs that link to syntect-only items break here.
       - name: Docs build clean (tree-sitter only)
-        run: cargo doc --no-deps -p scrive-core -p scrive-iced --no-default-features --features tree-sitter
+        run: cargo doc --no-deps -p matcha-core -p matcha-iced --no-default-features --features tree-sitter
         env:
           RUSTDOCFLAGS: -D warnings
 
@@ -135,7 +135,7 @@ jobs:
       - name: Headless crates depend on no GUI crate or runtime
         shell: bash
         run: |
-          for c in scrive-core scrive-lsp; do
+          for c in matcha-core matcha-lsp; do
             for features in "" "--all-features"; do
               out=$(cargo tree -p "$c" $features --target all -e normal --prefix none) || exit 1
               if grep -qE '^(iced|winit|wgpu|tokio)' <<<"$out"; then
@@ -149,7 +149,7 @@ jobs:
       - name: Tree-sitter-only builds pull in no syntect
         shell: bash
         run: |
-          for c in scrive-core scrive-iced; do
+          for c in matcha-core matcha-iced; do
             out=$(cargo tree -p "$c" --no-default-features --features tree-sitter -e normal --prefix none) || exit 1
             if grep -q '^syntect ' <<<"$out"; then
               echo "$c pulls in syntect without the syntect feature"

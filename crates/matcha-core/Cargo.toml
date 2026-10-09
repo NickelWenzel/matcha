@@ -1,0 +1,110 @@
+[package]
+name = "matcha-core"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+readme = "README.md"
+repository.workspace = true
+description = "Headless code-editor core: buffer, atomic multi-range transactions, undo/redo, selections, tracked-range decorations, and incremental syntax highlighting (syntect or tree-sitter). Imports no GUI crate."
+keywords = ["editor", "text", "buffer", "undo", "headless"]
+categories = ["text-editors", "data-structures"]
+# benches/support.rs is a shared module of the `perf` bench, not a bench of
+# its own — explicit [[bench] ] only.
+autobenches = false
+
+# HARD STRUCTURAL RULE: matcha-core depends on no GUI crate. If `iced`/`winit`/
+# `wgpu` ever appears in this crate's dependency tree, the design has leaked. CI
+# runs `cargo tree -p matcha-core` and asserts none appear.
+#
+# Dependency budget — each entry earns its place with a consumer:
+#   syntect (optional, `syntect` feature, on by default) — the line-state
+#               highlight backend for `.sublime-syntax` grammars. Types stay
+#               OUT of the public API (wrapped).
+#   memchr    — line-index and substring scanning.
+#   thiserror — transaction/load error enums.
+#   ropey     — the text rope (`rope.rs` wraps it; never public). Default
+#               features OFF: they add Unicode/CR line breaks, and matcha's
+#               line model is `\n` alone. Cargo unifies features, so a build
+#               where another crate turns them on fails rope construction
+#               (`rope::lf_only`).
+#   regex     — find's whole-word and regex modes. Types stay OUT of the public
+#               API (wrapped), like syntect's. Deliberately `regex` and NOT the
+#               `fancy-regex` syntect uses: a find pattern arrives
+#               keystroke-by-keystroke from a user, and fancy-regex BACKTRACKS,
+#               so one pathological pattern would hang the UI. regex's RE2
+#               automaton is linear-time by construction. Its own dependencies
+#               are small (regex-automata / regex-syntax / aho-corasick / memchr,
+#               the last already ours), and with the `syntect` feature they are
+#               shared with syntect's `default-fancy`.
+#   tree-sitter (optional, `tree-sitter` feature) — the parse-tree highlight
+#               backend: parser, incremental trees, highlights queries. Types
+#               stay OUT of the public API, like syntect's. Its own build
+#               script shims libc for wasm32-unknown-unknown, so the feature
+#               builds for the browser with no extra setup.
+#   tree-sitter-language (optional, `tree-sitter` feature) — the ONE backend
+#               type allowed in the public API, deliberately: `LanguageFn` in
+#               `TreeSitterDef::new`. It is the stable, runtime-version-free
+#               handoff type every grammar crate exports (`LANGUAGE`), so it is
+#               the only way a consumer can hand matcha a grammar.
+# The highlight backends, one feature each. With neither, a `Document` builds
+# without highlighting: `Grammar` has no constructor, so `set_syntax` can't be
+# called.
+[features]
+default = ["syntect"]
+syntect = ["dep:syntect"]
+tree-sitter = ["dep:tree-sitter", "dep:tree-sitter-language"]
+
+[dependencies]
+syntect = { version = "5", default-features = false, features = ["default-fancy"], optional = true }
+memchr = "2"      # find scanning (memmem/memchr2) + test oracles
+thiserror = "2"   # error enums (LoadError, TransactionError)
+regex = "1"       # find's whole-word + regex modes (wrapped; never public)
+ropey = { version = "1.6", default-features = false, features = ["simd"] }  # wrapped; never public
+tree-sitter = { version = "0.27", optional = true }           # wrapped; never public
+tree-sitter-language = { version = "0.1", optional = true }  # `LanguageFn`, the grammar handoff
+
+[dev-dependencies]
+# criterion: the wall-clock bench harness (op-count canaries live in unit tests;
+# wall-clock lives here). Dev-only — never enters the lib graph, so the
+# cargo-tree GUI gate is unaffected. Its default features pull in rayon, which
+# does not build for wasm32, so wasm gets it without them.
+[target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies]
+criterion = "0.5"
+
+[target.'cfg(target_arch = "wasm32")'.dev-dependencies]
+criterion = { version = "0.5", default-features = false }
+
+# tree-sitter-rust: the grammar the `tree-sitter` feature's tests highlight
+# with. Its build.rs predates the template that adds the wasm headers, so a
+# wasm32-unknown-unknown build needs `eval "$(scripts/wasm-cflags.sh)"` first.
+# Not on WASI: its C needs a wasi-sdk sysroot, and the wasip1 tests run
+# default features only.
+[target.'cfg(not(target_os = "wasi"))'.dev-dependencies]
+tree-sitter-rust = "0.24"
+# tree-sitter itself, named directly only by the `tree_sitter` bench: it
+# routes the C library's allocations through a counting allocator.
+tree-sitter = "0.27"
+
+# Built as a cdylib so CI can instantiate it under node: the tree-sitter
+# backend's wasm smoke test (scripts/wasm-smoke.mjs).
+[[example]]
+name = "wasm_smoke"
+crate-type = ["cdylib"]
+required-features = ["tree-sitter"]
+
+[[bench]]
+name = "perf"
+harness = false
+required-features = ["syntect"]
+
+[[bench]]
+name = "tree_sitter"
+harness = false
+required-features = ["tree-sitter"]
+
+[[test]]
+name = "spike_syntect"
+required-features = ["syntect"]
+
+[package.metadata.docs.rs]
+all-features = true

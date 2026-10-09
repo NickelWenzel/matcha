@@ -1,4 +1,4 @@
-// Runs scrive-core's `wasm_smoke` example under node. Instantiating with an
+// Runs matcha-core's `wasm_smoke` example under node. Instantiating with an
 // empty import object fails if any libc (or other) import leaked into the
 // module. `run` highlights an edited document through `Document` and returns
 // its span count, which is non-zero on success.

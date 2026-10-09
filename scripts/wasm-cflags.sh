@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Prints the CFLAGS line a wasm32-unknown-unknown build needs for tree-sitter
 # grammar crates whose build.rs predates the tree-sitter CLI 0.26 template
-# (tree-sitter-rust 0.24, a scrive-core dev-dependency): it points their C
+# (tree-sitter-rust 0.24, a matcha-core dev-dependency): it points their C
 # compiler at the libc headers tree-sitter-language ships. The headers live in
 # the cargo registry, so the path is resolved per machine. CFLAGS can't carry
 # a path with spaces, so neither can the cargo home.

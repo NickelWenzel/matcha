@@ -1856,6 +1856,63 @@ dependencies = [
 ]
 
 [[package]]
+name = "matcha-core"
+version = "0.4.0"
+dependencies = [
+ "criterion",
+ "memchr",
+ "regex",
+ "ropey",
+ "syntect",
+ "thiserror 2.0.18",
+ "tree-sitter",
+ "tree-sitter-language",
+ "tree-sitter-rust",
+]
+
+[[package]]
+name = "matcha-iced"
+version = "0.4.0"
+dependencies = [
+ "gif",
+ "iced",
+ "iced_renderer",
+ "iced_runtime",
+ "iced_tiny_skia",
+ "matcha-core",
+ "matcha-lsp",
+ "png",
+ "serde_json",
+ "tree-sitter-rust",
+]
+
+[[package]]
+name = "matcha-lsp"
+version = "0.4.0"
+dependencies = [
+ "crossbeam-channel",
+ "futures",
+ "futures-channel",
+ "futures-core",
+ "js-sys",
+ "lsp-server",
+ "lsp-types",
+ "matcha-core",
+ "mio",
+ "rustls",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.18",
+ "tungstenite",
+ "wasm-bindgen",
+ "wasm-bindgen-futures",
+ "wasmtimer",
+ "web-sys",
+ "webpki-roots",
+ "windows-sys 0.61.2",
+]
+
+[[package]]
 name = "memchr"
 version = "2.8.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2988,63 +3045,6 @@ name = "scopeguard"
 version = "1.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "94143f37725109f92c262ed2cf5e59bce7498c01bcc1502d7b9afe439a4e9f49"
-
-[[package]]
-name = "scrive-core"
-version = "0.4.0"
-dependencies = [
- "criterion",
- "memchr",
- "regex",
- "ropey",
- "syntect",
- "thiserror 2.0.18",
- "tree-sitter",
- "tree-sitter-language",
- "tree-sitter-rust",
-]
-
-[[package]]
-name = "scrive-iced"
-version = "0.4.0"
-dependencies = [
- "gif",
- "iced",
- "iced_renderer",
- "iced_runtime",
- "iced_tiny_skia",
- "png",
- "scrive-core",
- "scrive-lsp",
- "serde_json",
- "tree-sitter-rust",
-]
-
-[[package]]
-name = "scrive-lsp"
-version = "0.4.0"
-dependencies = [
- "crossbeam-channel",
- "futures",
- "futures-channel",
- "futures-core",
- "js-sys",
- "lsp-server",
- "lsp-types",
- "mio",
- "rustls",
- "scrive-core",
- "serde",
- "serde_json",
- "thiserror 2.0.18",
- "tungstenite",
- "wasm-bindgen",
- "wasm-bindgen-futures",
- "wasmtimer",
- "web-sys",
- "webpki-roots",
- "windows-sys 0.61.2",
-]
 
 [[package]]
 name = "sctk-adwaita"

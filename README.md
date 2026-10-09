@@ -1,34 +1,36 @@
-# scrive
+# matcha
 
-[![CI](https://github.com/robbym/scrive/actions/workflows/ci.yml/badge.svg)](https://github.com/robbym/scrive/actions/workflows/ci.yml)
-[![crates.io](https://img.shields.io/crates/v/scrive-iced)](https://crates.io/crates/scrive-iced)
-[![docs.rs](https://img.shields.io/docsrs/scrive-iced)](https://docs.rs/scrive-iced)
+[![CI](https://github.com/NickelWenzel/matcha/actions/workflows/ci.yml/badge.svg)](https://github.com/NickelWenzel/matcha/actions/workflows/ci.yml)
+[![crates.io](https://img.shields.io/crates/v/matcha-iced)](https://crates.io/crates/matcha-iced)
+[![docs.rs](https://img.shields.io/docsrs/matcha-iced)](https://docs.rs/matcha-iced)
 
 A from-scratch code-editor widget for [iced](https://iced.rs) — a headless
 editing engine plus an `iced::advanced::Widget` that renders it.
 
-![The scrive editor: syntax highlighting, multi-cursor rename, find and replace with match navigation and replace-all, code folding, and completion](https://raw.githubusercontent.com/robbym/scrive/master/docs/showcase.gif)
+matcha began as a fork of [scrive](https://github.com/robbym/scrive) by Robby Madruga.
+
+![The matcha editor: syntax highlighting, multi-cursor rename, find and replace with match navigation and replace-all, code folding, and completion](https://raw.githubusercontent.com/NickelWenzel/matcha/master/docs/showcase.gif)
 
 <sub>Recorded deterministically, headless — the demo renders itself, no external tools:
-`cargo run -p scrive-iced --example record_showcase --release -- docs/showcase.gif`</sub>
+`cargo run -p matcha-iced --example record_showcase --release -- docs/showcase.gif`</sub>
 
 Three crates, with every dependency pointing one way:
 
-- **`scrive-core`** — the headless engine: a rope-backed buffer, atomic
+- **`matcha-core`** — the headless engine: a rope-backed buffer, atomic
   multi-range transactions with mechanically-derived undo/redo, selections and
   multi-cursor, tracked-range decorations (diagnostics, find matches, snippet
   stops), an incremental syntax-highlight cache, folding, and the
   language-intelligence controllers. Imports no GUI crate.
-- **`scrive-iced`** — an `iced::advanced::Widget` wrapping the core: gutter and
+- **`matcha-iced`** — an `iced::advanced::Widget` wrapping the core: gutter and
   line numbers, N-caret selections, syntax highlighting, bracket-pair colors and
   matching, indent guides, diagnostic squiggles, code folding, and the
-  completion / hover / signature-help popups. Depends on `scrive-core`; the
+  completion / hover / signature-help popups. Depends on `matcha-core`; the
   dependency never points back.
-- **`scrive-lsp`** — a Language Server Protocol client. It owns the connection
+- **`matcha-lsp`** — a Language Server Protocol client. It owns the connection
   to the server (a child process, TCP, a WebSocket, or an in-process server),
   keeps the server's copy of each open document in sync, and turns its replies
-  into per-document updates. Depends on `scrive-core` and no GUI crate;
-  `scrive-iced` pulls it in behind its `lsp` feature.
+  into per-document updates. Depends on `matcha-core` and no GUI crate;
+  `matcha-iced` pulls it in behind its `lsp` feature.
 
 ## Features
 
@@ -89,7 +91,7 @@ bundled font:
 ```rust
 use iced::time::Instant;
 use iced::{Element, Subscription, Task};
-use scrive_iced::{CodeEditor, Event};
+use matcha_iced::{CodeEditor, Event};
 
 struct App { editor: CodeEditor }
 
@@ -113,7 +115,7 @@ Attach a grammar with `.language(grammar)` (highlighting is coloured at load, no
 scroll needed) and override defaults with `.theme(..)`, `.find(..)`,
 `.completions(..)`, `.hover(..)`, and `.signature(..)`. For full control, drop to
 the low-level `Editor` widget. The host **must** register the bundled font —
-`iced::application(..).fonts([scrive_iced::CODICON_FONT])` — so the fold chevrons
+`iced::application(..).fonts([matcha_iced::CODICON_FONT])` — so the fold chevrons
 and find-bar icons render.
 
 ## Syntax highlighting
@@ -124,19 +126,19 @@ colors both.
 
 | feature       | default | grammar                      | the app supplies                                    |
 |---------------|---------|------------------------------|-----------------------------------------------------|
-| `syntect`     | on      | `scrive_core::SyntaxDef`     | a `.sublime-syntax` file                            |
-| `tree-sitter` | off     | `scrive_core::TreeSitterDef` | a grammar crate's `LANGUAGE` and a highlights query |
+| `syntect`     | on      | `matcha_core::SyntaxDef`     | a `.sublime-syntax` file                            |
+| `tree-sitter` | off     | `matcha_core::TreeSitterDef` | a grammar crate's `LANGUAGE` and a highlights query |
 
-Both features can be on at once. `scrive-iced` forwards them to `scrive-core`.
+Both features can be on at once. `matcha-iced` forwards them to `matcha-core`.
 With `syntect`, a document of 2 MiB or more tokenizes on worker threads
 (natively). A tree-sitter parse runs on the UI thread, a budgeted slice per
 frame, and the parse tree stays in memory while the document is open. With
-tree-sitter-rust it measured 28 times the text's size on scrive's own sources
+tree-sitter-rust it measured 28 times the text's size on matcha's own sources
 and 36 times on a denser generated corpus.
 
 ```rust
-use scrive_core::{SyntaxDef, TreeSitterDef};
-use scrive_iced::CodeEditor;
+use matcha_core::{SyntaxDef, TreeSitterDef};
+use matcha_iced::CodeEditor;
 
 // syntect
 let grammar = SyntaxDef::from_sublime_syntax(include_str!("rust.sublime-syntax"))?;
@@ -148,22 +150,22 @@ let editor = CodeEditor::new(source).language(grammar);
 ```
 
 `tree_sitter_rust::LANGUAGE` goes in as it is, with no `.into()`. `.language`
-takes anything that converts into a `scrive_core::Grammar`, and so does
+takes anything that converts into a `matcha_core::Grammar`, and so does
 `Document::set_syntax` when you drive the core without the widget. For a
 tree-sitter-only build with no syntect in the dependency tree:
 
 ```bash
-cargo add scrive-iced --no-default-features --features tree-sitter
-cargo add scrive-core --no-default-features
+cargo add matcha-iced --no-default-features --features tree-sitter
+cargo add matcha-core --no-default-features
 cargo add tree-sitter-rust
 ```
 
-The default theme is the bundled Scrive Dark. `.theme(..)` takes your own
+The default theme is the bundled Matcha Dark. `.theme(..)` takes your own
 `TokenTheme`, parsed from a `.tmTheme` (`TokenTheme::from_tm_theme`, which
 needs `syntect`) or built in code:
 
 ```rust
-use scrive_core::{Rgba, SpanStyle, TokenTheme};
+use matcha_core::{Rgba, SpanStyle, TokenTheme};
 
 let rgb = |r, g, b| Rgba { r, g, b, a: 0xff };
 let plain = |fg| SpanStyle { fg, bold: false, italic: false };
@@ -193,7 +195,7 @@ later build as they are. Older ones, such as tree-sitter-rust 0.24, fail on
 
 ## Language servers
 
-Enable the `lsp` feature and `scrive_iced::lsp` re-exports the client. An
+Enable the `lsp` feature and `matcha_iced::lsp` re-exports the client. An
 `lsp::Client` talks to one server over a connection it owns, and the builder's
 last call picks the transport:
 
@@ -259,17 +261,17 @@ Hovering a hint shows its tooltip, Ctrl+click on a part jumps, and a
 double-click inserts the hint's text. The library binds no toggle key.
 
 `examples/lsp` runs two tabs against a scripted in-process server and shows
-the traffic. `crates/scrive-lsp/README.md` covers the client in depth.
+the traffic. `crates/matcha-lsp/README.md` covers the client in depth.
 
 ## Examples
 
 ```bash
-cargo run -p scrive-iced --example minimal   # the CodeEditor quick start above
-cargo run -p scrive-iced --example scratch   # the low-level Editor widget, full control
-cargo run -p scrive-iced --features tree-sitter --example tree_sitter   # the quick start with a tree-sitter grammar
-cargo run -p scrive-iced --features lsp --example lsp   # two tabs on a scripted language server
-cargo run -p scrive-iced --features lsp --example rust_analyzer   # a real rust-analyzer, on a scratch crate
-cargo run -p scrive-iced --features lsp --example rust_analyzer -- path/to/file.rs   # …or on your file
+cargo run -p matcha-iced --example minimal   # the CodeEditor quick start above
+cargo run -p matcha-iced --example scratch   # the low-level Editor widget, full control
+cargo run -p matcha-iced --features tree-sitter --example tree_sitter   # the quick start with a tree-sitter grammar
+cargo run -p matcha-iced --features lsp --example lsp   # two tabs on a scripted language server
+cargo run -p matcha-iced --features lsp --example rust_analyzer   # a real rust-analyzer, on a scratch crate
+cargo run -p matcha-iced --features lsp --example rust_analyzer -- path/to/file.rs   # …or on your file
 ```
 
 `scratch` opens a real editor over a sample Rust document — type, select, find
@@ -288,7 +290,7 @@ rust-analyzer's inlay hints; Ctrl+I toggles them.
 
 All three crates build for `wasm32-unknown-unknown`, and every example but
 `rust_analyzer` runs in the browser. The web has no system fonts, so on wasm32 the editor's default font is
-the bundled Fira Code ([`FIRA_CODE_FONT`](https://docs.rs/scrive-iced/latest/scrive_iced/constant.FIRA_CODE_FONT.html)), with its ligatures,
+the bundled Fira Code ([`FIRA_CODE_FONT`](https://docs.rs/matcha-iced/latest/matcha_iced/constant.FIRA_CODE_FONT.html)), with its ligatures,
 which `required_fonts()` includes there. Enable iced's `fira-sans` feature for
 UI text such as the find bar, and `webgl` for browsers without WebGPU. There
 are no threads, so a large document is highlighted on the UI thread instead of
@@ -303,7 +305,7 @@ Serve an example as a web app with [Trunk](https://trunkrs.dev) (it fetches
 the matching `wasm-bindgen` itself):
 
 ```bash
-cd crates/scrive-iced
+cd crates/matcha-iced
 trunk serve --release --example minimal   # or: --example scratch
 trunk serve --release --example lsp --features lsp
 ```
