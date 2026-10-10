@@ -114,7 +114,8 @@ pub use movement::{move_selections, ColumnDir, Granularity, Motion};
 pub use patch::{Edit, Patch};
 pub use row_layout::{
     tail_start_col, virtual_cell, CaretCell, Chip, DisplayPosition, HeaderHit, HeaderLayout,
-    RowLayout, TailGlyph, FOLD_PLACEHOLDER_CELLS, INLINE_CHIP_CELLS,
+    RowLayout, TailGlyph, WhitespaceKind, WhitespaceMark, FOLD_PLACEHOLDER_CELLS,
+    INLINE_CHIP_CELLS,
 };
 pub use selection::{Selection, SelectionId, SelectionSet};
 pub use transaction::{Committed, EditOp, TransactionError};

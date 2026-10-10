@@ -125,6 +125,30 @@ pub struct TailGlyph {
     pub ch: char,
 }
 
+/// What a [`WhitespaceMark`] stands for.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum WhitespaceKind {
+    /// A space, one cell wide.
+    Space,
+    /// A tab.
+    Tab {
+        /// Cells the tab spans: the distance to its next tab stop.
+        cells: u32,
+    },
+}
+
+/// One visible space or tab on a row, as [`RowLayout::whitespace`] yields it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct WhitespaceMark {
+    /// Byte column on the row.
+    pub col: u32,
+    /// First display cell, after any inlay hints at `col` (the
+    /// [`Edge::Start`] side, where the row's glyphs are drawn).
+    pub cell: u32,
+    /// Whether it is a space or a tab, and how wide.
+    pub kind: WhitespaceKind,
+}
+
 /// One inlay hint as it lays out on a row: what [`RowLayout::inlays`] yields.
 #[derive(Clone, Copy, Debug)]
 pub struct Inlay<'a> {
@@ -471,6 +495,27 @@ impl<'a> RowLayout<'a> {
     #[must_use]
     pub fn width(&self) -> u32 {
         self.display_cell(self.line.len() as u32, Edge::Start)
+    }
+
+    /// The row's visible spaces and tabs, left to right, each with its
+    /// display cell. Whitespace hidden inside a collapsed inline fold yields
+    /// nothing.
+    pub fn whitespace(&self) -> impl Iterator<Item = WhitespaceMark> + '_ {
+        let mut raw = 0;
+        self.line.char_indices().filter_map(move |(i, ch)| {
+            let at = raw;
+            raw += if ch == '\t' { display_map::tab_width(at, self.tab) } else { 1 };
+            let kind = match ch {
+                ' ' => WhitespaceKind::Space,
+                '\t' => WhitespaceKind::Tab { cells: raw - at },
+                _ => return None,
+            };
+            let col = i as u32;
+            if self.glyph_hidden(col) {
+                return None;
+            }
+            Some(WhitespaceMark { col, cell: self.cell_of(at) + self.hint_cells(col, Edge::Start), kind })
+        })
     }
 
     /// The row's collapsed chips, in display order.
@@ -1393,6 +1438,89 @@ mod tests {
         let layout = doc.rows().layout(BufferRow(0));
         assert_eq!(layout.display_cell(1, Edge::Start), 3, "the tab starts after the hint");
         assert_eq!(layout.display_cell(2, Edge::Start), 6, "and keeps its three cells");
+    }
+
+    // ── Whitespace marks ──
+
+    fn marks(doc: &Document) -> Vec<WhitespaceMark> {
+        doc.rows().layout(BufferRow(0)).whitespace().collect()
+    }
+
+    fn space(col: u32, cell: u32) -> WhitespaceMark {
+        WhitespaceMark { col, cell, kind: WhitespaceKind::Space }
+    }
+
+    fn tab(col: u32, cell: u32, cells: u32) -> WhitespaceMark {
+        WhitespaceMark { col, cell, kind: WhitespaceKind::Tab { cells } }
+    }
+
+    #[test]
+    fn spaces_mark_their_own_cells() {
+        let doc = doc_with_folds("a b  c ", &[]);
+        assert_eq!(marks(&doc), vec![space(1, 1), space(3, 3), space(4, 4), space(6, 6)]);
+    }
+
+    #[test]
+    fn an_empty_line_has_no_whitespace_marks() {
+        let doc = doc_with_folds("", &[]);
+        assert_eq!(marks(&doc), vec![]);
+    }
+
+    /// A tab spans to its next stop, so its width depends on where it starts.
+    #[test]
+    fn a_tab_spans_to_the_next_tab_stop() {
+        let doc = doc_with_folds("\ta\tab\tabc\t", &[]);
+        assert_eq!(marks(&doc), vec![tab(0, 0, 4), tab(2, 5, 3), tab(5, 10, 2), tab(9, 15, 1)]);
+    }
+
+    /// A space at a suffix hint's offset renders after the hint, as its glyph
+    /// run does.
+    #[test]
+    fn a_space_at_a_suffix_hint_lands_after_the_hint() {
+        let mut doc = doc_with_folds("let x = 1", &[]);
+        install(&mut doc, vec![(5, plain(inlay::Kind::Type, ": i32", 1))]);
+        assert_eq!(marks(&doc), vec![space(3, 3), space(5, 10), space(7, 12)]);
+    }
+
+    #[test]
+    fn a_tab_after_a_hint_keeps_its_buffer_space_width() {
+        let mut doc = doc_with_folds("a\tb", &[]);
+        install(&mut doc, vec![(1, plain(inlay::Kind::Type, "tt", 1))]);
+        assert_eq!(marks(&doc), vec![tab(1, 3, 3)]);
+    }
+
+    /// Whitespace inside a collapsed pair is hidden; whitespace after it moves
+    /// left by what the chip saves.
+    #[test]
+    fn whitespace_in_a_collapsed_inline_fold_is_hidden_and_later_marks_shift() {
+        let doc = doc_with_folds("x [ a b ] y\tz", &[2]);
+        assert_eq!(marks(&doc), vec![space(1, 1), space(9, 7), tab(11, 9, 1)]);
+    }
+
+    /// Every mark sits at its column's `Edge::Start` display cell, on a row
+    /// with tabs, hints on both sides of a collapsed pair, and trailing spaces.
+    #[test]
+    fn whitespace_marks_match_display_cell() {
+        let line = "\tlet x [ a ]\t= 1;  ";
+        let mut doc = doc_with_folds(line, &[7]);
+        install(&mut doc, vec![(6, plain(inlay::Kind::Type, ": T", 1)), (15, plain(inlay::Kind::Parameter, "n:", 2))]);
+        let rows = doc.rows();
+        let layout = rows.layout(BufferRow(0));
+        assert_eq!(keys(&layout), key_list(&[1, 2]));
+        let found: Vec<WhitespaceMark> = layout.whitespace().collect();
+        let expected: Vec<u32> = line
+            .char_indices()
+            .filter(|&(i, ch)| matches!(ch, ' ' | '\t') && !layout.glyph_hidden(i as u32))
+            .map(|(i, _)| i as u32)
+            .collect();
+        assert_eq!(found.iter().map(|m| m.col).collect::<Vec<_>>(), expected);
+        for mark in found {
+            assert_eq!(mark.cell, layout.display_cell(mark.col, Edge::Start), "col {}", mark.col);
+            if let WhitespaceKind::Tab { cells } = mark.kind {
+                let raw = display_map::expand(line, mark.col, display_map::default_tab_size());
+                assert_eq!(cells, display_map::expand(line, mark.col + 1, display_map::default_tab_size()) - raw);
+            }
+        }
     }
 
     /// Hints inside a collapsed pair are not laid out; those at its outer
