@@ -12,7 +12,7 @@
 //! - hover: a defined item's declaration and `///` doc, else a line on a keyword or common type;
 //! - signature help: the enclosing call's function, with the parameter the caret is in;
 //! - definition: the `fn`, `struct`, `enum` or `trait` of that name in any document;
-//! - rename: whole-word, in every document;
+//! - rename: whole-word, in every document, leaving comments and strings alone;
 //! - formatting: strip trailing whitespace;
 //! - inlay hints: a type hint after `let x = f(…)` for a function some document defines (`Self`
 //!   reads as the enclosing `impl`), a parameter hint before each call's first argument unless
@@ -550,8 +550,10 @@ impl Scripted {
             .documents
             .iter()
             .filter_map(|(uri, document)| {
-                let edits: Vec<Value> = occurrences(&document.text, word)
-                    .map(|at| {
+                let edits: Vec<Value> = code_words(&document.text)
+                    .into_iter()
+                    .filter(|&(_, name)| name == word)
+                    .map(|(at, _)| {
                         json!({
                             "range": { "start": position(&document.text, at), "end": position(&document.text, at + word.len()) },
                             "newText": new_name
@@ -995,6 +997,18 @@ fn split(text: &str, start: usize, end: usize) -> Vec<(usize, &str)> {
 
 /// The identifiers in `text` outside comments and string literals, macro names aside.
 fn identifiers(text: &str) -> Vec<&str> {
+    code_words(text)
+        .into_iter()
+        .filter(|&(at, name)| {
+            let after = &text[at + name.len()..];
+            !(after.starts_with('!') && !after.starts_with("!="))
+        })
+        .map(|(_, name)| name)
+        .collect()
+}
+
+/// Every word outside comments and string literals, with its offset. Numbers are left out.
+fn code_words(text: &str) -> Vec<(usize, &str)> {
     let mut found = Vec::new();
     let mut at = 0;
     while let Some(c) = text[at..].chars().next() {
@@ -1010,10 +1024,8 @@ fn identifiers(text: &str) -> Vec<&str> {
             at = (at + i + 1).min(text.len());
         } else if is_word(c) {
             let name = word(text, at);
-            let after = &text[at + name.len()..];
-            let macro_call = after.starts_with('!') && !after.starts_with("!=");
-            if !c.is_numeric() && !macro_call {
-                found.push(name);
+            if !c.is_numeric() {
+                found.push((at, name));
             }
             at += name.len();
         } else {
@@ -1292,6 +1304,20 @@ fn main() {
         let ty = &hints[1]["label"][1]["location"];
         assert_eq!(ty["uri"], SAMPLES_URI, "the type links to its struct");
         assert_eq!(ty["range"]["start"], at("Samples {", 0));
+    }
+
+    /// Rename edits the code, not the prose: the doc comment's `window` stays.
+    #[test]
+    fn rename_leaves_comments_alone() {
+        let at = SAMPLES.find("window =").expect("in the sample");
+        let params = json!({
+            "textDocument": { "uri": SAMPLES_URI }, "position": position(SAMPLES, at), "newName": "recent"
+        });
+        let renamed = opened().request("textDocument/rename", params);
+        let edits = renamed["documentChanges"][0]["edits"].as_array().expect("edits").clone();
+        let code: Vec<Value> = SAMPLES.match_indices("window").map(|(at, _)| position(SAMPLES, at)).collect();
+        let starts: Vec<Value> = edits.iter().map(|edit| edit["range"]["start"].clone()).collect();
+        assert_eq!(starts, code[1..], "every `window` but the one in the doc comment");
     }
 
     #[test]
