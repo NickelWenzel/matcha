@@ -2,7 +2,8 @@
 //!
 //! Renders the REAL `scratch` editor frame-by-frame with the tiny-skia renderer
 //! — no window, no GPU — while a scripted timeline drives it with genuine
-//! keyboard events and app messages (find & replace, fold). The editor talks
+//! keyboard events and app messages: multi-cursor editing, find & replace,
+//! folding, the language-server features, and the whitespace marks. The editor talks
 //! to scratch's in-process demo language server, and every beat settles the
 //! conversation before its frame. Each beat renders one frame,
 //! held for its own delay; identical consecutive frames are coalesced. The
@@ -33,7 +34,7 @@ use iced_runtime::{task, Action};
 use iced_tiny_skia::graphics::Viewport;
 
 use scratch::{matcha_dark, App, Message};
-use matcha_iced::Event as CeEvent;
+use matcha_iced::{Action as EditorAction, Event as CeEvent};
 
 const W: u32 = 900;
 const H: u32 = 560;
@@ -73,6 +74,11 @@ fn press(named: Named, modifiers: Modifiers) -> Step {
 /// A `Ctrl+<char>` chord (fold, unfold, …).
 fn chord(c: &str, modifiers: Modifiers) -> Step {
     Step::Ev(key_event(Key::Character(c.into()), None, modifiers | Modifiers::CTRL))
+}
+
+/// `n` copies of a step, applied in one beat.
+fn repeat(step: impl FnMut() -> Step, n: usize) -> Vec<Step> {
+    std::iter::repeat_with(step).take(n).collect()
 }
 
 /// The demo timeline: `(steps, hold)` — apply the steps, render one frame, hold
@@ -144,19 +150,69 @@ fn script() -> Vec<(Vec<Step>, u16)> {
     beat(vec![chord("]", Modifiers::empty())], 80);
     beat(vec![], 55);
 
-    // Completion: on a fresh line, type a prefix — the popup filters live.
-    beat(vec![press(Named::End, Modifiers::empty())], 22);
-    beat(vec![press(Named::Enter, Modifiers::empty())], 22);
-    for c in ["s", "t", "r"] {
-        beat(vec![typed(c)], 16);
+    // Language server: everything below comes from scratch's demo server over
+    // the LSP client, the same requests a real server answers.
+    let sample = scratch::long_sample();
+    // `main` comes into view with its inlay hints: the binding's type and the
+    // call's parameter name.
+    beat(vec![press(Named::End, Modifiers::CTRL)], 140);
+    // Hover `average`: its declaration and doc comment. The widget asks after the
+    // pointer rests on a word; the frozen clock never gets there, so the script
+    // sends the request the widget would.
+    let average = sample.find("window.average()").expect("the sample calls average") as u32 + 9;
+    beat(vec![Step::Msg(Message::Editor(CeEvent::Editor(EditorAction::HoverQuery(average))))], 170);
+    beat(vec![Step::Msg(Message::Editor(CeEvent::Editor(EditorAction::HoverDismiss)))], 20);
+
+    // Completion from the document's own items, then signature help: on a new
+    // line in the loop, `window.pus` offers `push`, and accepting it inserts the
+    // call with its parameter selected and shows the signature.
+    beat(repeat(|| press(Named::ArrowUp, Modifiers::empty()), 4), 20);
+    beat(vec![press(Named::End, Modifiers::empty()), press(Named::Enter, Modifiers::empty())], 25);
+    for c in ["w", "i", "n", "d", "o", "w", "."] {
+        beat(vec![typed(c)], 9);
     }
     beat(vec![], 90);
-    beat(vec![press(Named::ArrowDown, Modifiers::empty())], 32);
+    for c in ["p", "u", "s"] {
+        beat(vec![typed(c)], 30);
+    }
+    beat(vec![press(Named::Enter, Modifiers::empty())], 190);
     beat(vec![press(Named::Escape, Modifiers::empty())], 25);
-    // Undo the completion demo edit (the `str` line) so the view settles back.
-    beat(vec![chord("z", Modifiers::empty())], 30);
-    beat(vec![press(Named::Home, Modifiers::CTRL)], 20);
+
+    // Diagnostics: the server flags a FIXME as an error.
+    beat(vec![press(Named::End, Modifiers::empty()), press(Named::Enter, Modifiers::empty())], 20);
+    for chunk in ["//", " FIX", "ME", ": smooth", " spikes"] {
+        beat(chunk.split("").filter(|c| !c.is_empty()).map(typed).collect(), 14);
+    }
     beat(vec![], 150);
+    // Delete both demo lines again (Ctrl+Shift+K): the FIXME line, then the
+    // `push` line above it.
+    beat(vec![chord("k", Modifiers::SHIFT)], 25);
+    beat(vec![press(Named::ArrowUp, Modifiers::empty()), chord("k", Modifiers::SHIFT)], 40);
+
+    // Goto definition: F12 on `Samples` in `main` selects its struct.
+    beat(vec![press(Named::End, Modifiers::CTRL)], 20);
+    let mut to_samples = repeat(|| press(Named::ArrowUp, Modifiers::empty()), 6);
+    to_samples.extend(repeat(|| press(Named::ArrowRight, Modifiers::empty()), 23));
+    beat(to_samples, 60);
+    beat(vec![press(Named::F12, Modifiers::empty())], 150);
+
+    // Rename: F2 on `window` renames it everywhere through the server.
+    beat(vec![press(Named::End, Modifiers::CTRL)], 20);
+    let mut to_window = repeat(|| press(Named::ArrowUp, Modifiers::empty()), 6);
+    to_window.extend(repeat(|| press(Named::ArrowRight, Modifiers::empty()), 14));
+    beat(to_window, 50);
+    beat(vec![press(Named::F2, Modifiers::empty())], 60);
+    for r in ["r", "re", "rec", "rece", "recen", "recent"] {
+        beat(vec![Step::Msg(Message::Editor(CeEvent::RenameText(r.into())))], 12);
+    }
+    beat(vec![], 50);
+    beat(vec![Step::Msg(Message::Editor(CeEvent::SubmitRename))], 160);
+    beat(vec![chord("z", Modifiers::empty())], 30);
+
+    // Whitespace marks: a dot per space, an arrow per tab.
+    beat(vec![press(Named::Home, Modifiers::CTRL)], 25);
+    beat(vec![Step::Msg(Message::ToggleWhitespace)], 170);
+    beat(vec![Step::Msg(Message::ToggleWhitespace)], 150);
 
     t
 }

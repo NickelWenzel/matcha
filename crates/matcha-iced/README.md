@@ -9,7 +9,7 @@ editing engine plus an `iced::advanced::Widget` that renders it.
 
 matcha began as a fork of [scrive](https://github.com/robbym/scrive) by Robby Madruga.
 
-![The matcha editor: syntax highlighting, multi-cursor rename, find and replace with match navigation and replace-all, code folding, and completion](https://raw.githubusercontent.com/NickelWenzel/matcha/master/docs/showcase.gif)
+![The matcha editor: syntax highlighting, multi-cursor rename, find and replace with match navigation and replace-all, code folding, and language-server features — inlay hints, hover, completion, signature help, diagnostics, goto definition and rename — then the whitespace marks](https://raw.githubusercontent.com/NickelWenzel/matcha/master/docs/showcase.gif)
 
 <sub>Recorded deterministically, headless — the demo renders itself, no external tools:
 `cargo run -p matcha-iced --features lsp,tree-sitter --example record_showcase --release -- docs/showcase.gif`</sub>
