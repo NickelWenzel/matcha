@@ -177,13 +177,13 @@ crate as `matcha_iced::lsp` and gives `CodeEditor` six methods.
 The client sends what these produce. `sync_lsp`, `save_lsp` and `apply_lsp` return
 `update::Applied`: a jump into another document for the host to route, and why the update was
 refused, if it was. `jump` returns the same inside a `Result`. `crates/matcha-iced/examples/lsp`
-wires two tabs to one client against a scripted in-process server, and
-`examples/rust_analyzer` runs rust-analyzer over stdio:
+wires two tabs to one client against a scripted in-process server, and `examples/scratch` runs
+rust-analyzer over stdio:
 
 ```bash
 cargo run -p matcha-iced --features lsp --example lsp
 cd crates/matcha-iced && trunk serve --release --example lsp --features lsp
-cargo run -p matcha-iced --features lsp --example rust_analyzer
+cargo run -p matcha-iced --features lsp,tree-sitter --example scratch
 ```
 
 ## Without matcha-iced

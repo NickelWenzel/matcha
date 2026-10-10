@@ -268,30 +268,31 @@ the traffic. `crates/matcha-lsp/README.md` covers the client in depth.
 
 ```bash
 cargo run -p matcha-iced --example minimal   # the CodeEditor quick start above
-cargo run -p matcha-iced --features lsp,tree-sitter --example scratch   # the low-level Editor widget, full control
+cargo run -p matcha-iced --features lsp,tree-sitter --example scratch   # rust-analyzer, on a scratch crate
+cargo run -p matcha-iced --features lsp,tree-sitter --example scratch -- path/to/file.rs   # …or on your file
 cargo run -p matcha-iced --features tree-sitter --example tree_sitter   # the quick start with a tree-sitter grammar
 cargo run -p matcha-iced --features lsp --example lsp   # two tabs on a scripted language server
-cargo run -p matcha-iced --features lsp --example rust_analyzer   # a real rust-analyzer, on a scratch crate
-cargo run -p matcha-iced --features lsp --example rust_analyzer -- path/to/file.rs   # …or on your file
 ```
 
-`scratch` opens a real editor over a sample Rust document — type, select, find
-(Ctrl+F), fold, and undo/redo. Ctrl+Shift+W (Cmd+Shift+W on macOS) turns the
-whitespace marks on and off: `·` for a space, `→` for a tab. `lsp` shows the
-traffic panel next to the editor. Press F12 on `greet`, F2 to rename it across
-both files, or Shift+Alt+F to format. Its main.rs shows inlay hints: Ctrl+click
-`name:` to jump to the parameter, double-click `: String` to insert it, and
-Ctrl+I to turn them off and on. `rust_analyzer` is native only and needs
-rust-analyzer on `PATH`. It runs the server over stdio, shows its status and
-latest log line under the editor, restarts it if it crashes, and shuts it down
-when the window closes. Its `cargo check` diagnostics refresh when you save with
-Ctrl+S (Cmd+S on macOS), and the button by the status line turns check-on-save
-off and on. It shows rust-analyzer's inlay hints; Ctrl+I toggles them.
+`scratch` opens a real editor on rust-analyzer — type, select, find (Ctrl+F),
+fold, and undo/redo, with hover, completion, signature help, F12 and F2. Without
+a path it opens a sample Rust document in a scratch crate it writes to the temp
+directory. It needs rust-analyzer on `PATH`; without it, the window runs an
+in-process demo server and the status line says why. It shows the server's
+status and latest log line under the editor, restarts it if it crashes, and
+shuts it down when the window closes. Ctrl+S (Cmd+S on macOS) saves, and
+rust-analyzer's `cargo check` diagnostics refresh then; the button by the status
+line turns check-on-save off and on. Ctrl+I toggles the inlay hints, and
+Ctrl+Shift+W the whitespace marks: `·` for a space, `→` for a tab. `lsp` shows
+the traffic panel next to the editor. Press F12 on `greet`, F2 to rename it
+across both files, or Shift+Alt+F to format. Its main.rs shows inlay hints:
+Ctrl+click `name:` to jump to the parameter, double-click `: String` to insert
+it, and Ctrl+I to turn them off and on.
 
 ## Web (wasm32)
 
-All three crates build for `wasm32-unknown-unknown`, and every example but
-`rust_analyzer` runs in the browser. The web has no system fonts, so on wasm32 the editor's default font is
+All three crates build for `wasm32-unknown-unknown`, and every example runs in
+the browser; there `scratch` talks to the demo server. The web has no system fonts, so on wasm32 the editor's default font is
 the bundled Fira Code ([`FIRA_CODE_FONT`](https://docs.rs/matcha-iced/latest/matcha_iced/constant.FIRA_CODE_FONT.html)), with its ligatures,
 which `required_fonts()` includes there. Enable iced's `fira-sans` feature for
 UI text such as the find bar, and `webgl` for browsers without WebGPU. There
