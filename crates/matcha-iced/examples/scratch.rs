@@ -1,11 +1,11 @@
 //! `scratch` — the development window used to review the editor by eye.
 //!
 //! ```text
-//! cargo run -p matcha-iced --example scratch                              # open the window
-//! cargo run -p matcha-iced --example scratch -- --capture out.png         # headless PNG
-//! cargo run -p matcha-iced --example scratch -- --capture-folds out.png   # …all folds collapsed
-//! cargo run -p matcha-iced --example scratch -- --capture-find out.png    # …find+replace bar open
-//! cargo run -p matcha-iced --example scratch -- --capture-whitespace out.png  # whitespace marks
+//! cargo run -p matcha-iced --features tree-sitter --example scratch                              # open the window
+//! cargo run -p matcha-iced --features tree-sitter --example scratch -- --capture out.png         # headless PNG
+//! cargo run -p matcha-iced --features tree-sitter --example scratch -- --capture-folds out.png   # …all folds collapsed
+//! cargo run -p matcha-iced --features tree-sitter --example scratch -- --capture-find out.png    # …find+replace bar open
+//! cargo run -p matcha-iced --features tree-sitter --example scratch -- --capture-whitespace out.png  # whitespace marks
 //! ```
 //!
 //! In the window, Ctrl+Shift+W (Cmd+Shift+W on macOS) shows or hides the
@@ -41,8 +41,8 @@ use iced::{Element, Subscription, Task, Theme};
 
 use matcha_core::{
     is_completion_word_char, CompletionCx, CompletionItem, CompletionKind, Completions, Diagnostic,
-    Granularity, Hover, HoverCx, HoverInfo, InsertText, Point, Severity, SignatureCx, SignatureHelp,
-    SignatureInfo, SyntaxDef,
+    Grammar, Granularity, Hover, HoverCx, HoverInfo, InsertText, Point, Severity, SignatureCx, SignatureHelp,
+    SignatureInfo, SyntaxDef, TreeSitterDef,
 };
 use matcha_iced::{Action, CodeEditor, Event};
 
@@ -203,19 +203,28 @@ impl Default for App {
 impl App {
     pub fn new() -> Self {
         // `--large <MB>` swaps in the synthetic corpus (the field-gate doc).
+        // It keeps the syntect grammar, whose worker pool the field gate measures.
         match LARGE_DOC.get() {
-            Some(source) => Self::with_source(source),
+            Some(source) => Self::with_grammar(
+                source,
+                SyntaxDef::from_sublime_syntax(include_str!("assets/rust.sublime-syntax"))
+                    .expect("bundled Rust grammar parses"),
+            ),
             None => Self::with_source(&long_sample()),
         }
     }
 
     /// The demo editor and its stub providers over `source`.
     pub fn with_source(source: &str) -> Self {
+        let grammar = TreeSitterDef::new(tree_sitter_rust::LANGUAGE, tree_sitter_rust::HIGHLIGHTS_QUERY)
+            .expect("tree-sitter-rust's highlight query compiles");
+        Self::with_grammar(source, grammar)
+    }
+
+    fn with_grammar(source: &str, grammar: impl Into<Grammar>) -> Self {
         // Grammar + line comment are app-supplied language config (the core ships
         // neither); the theme defaults to the bundled Matcha Dark. `.language`
         // colours the document at load — no first scroll needed.
-        let grammar = SyntaxDef::from_sublime_syntax(include_str!("assets/rust.sublime-syntax"))
-            .expect("bundled Rust grammar parses");
         let editor = CodeEditor::new(source)
             .language(grammar)
             .line_comment(Some("//"))

@@ -11,7 +11,7 @@
 //!
 //! Run:
 //! ```text
-//! cargo run -p matcha-iced --example record_showcase --release -- docs/showcase.gif
+//! cargo run -p matcha-iced --features tree-sitter --example record_showcase --release -- docs/showcase.gif
 //! ```
 
 #[path = "scratch.rs"]
