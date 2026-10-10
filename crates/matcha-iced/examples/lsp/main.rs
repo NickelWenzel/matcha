@@ -26,6 +26,7 @@
 // On Windows, a release build is a GUI app with no console window.
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+#[path = "../shared/demo_server.rs"]
 mod server;
 
 use std::collections::VecDeque;
