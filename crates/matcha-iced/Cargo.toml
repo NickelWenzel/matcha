@@ -5,7 +5,10 @@ edition.workspace = true
 license.workspace = true
 readme = "README.md"
 repository.workspace = true
-description = "iced 0.14 integration for matcha: an `advanced::Widget` code editor with gutter, selections, syntax highlighting, diagnostics, completion, and hover. Wraps matcha-core."
+# Unpublishable until iced 0.15 is on crates.io: it builds against the git
+# iced patched in at the workspace root.
+publish = false
+description = "iced 0.15 (git) integration for matcha: an `advanced::Widget` code editor with gutter, selections, syntax highlighting, diagnostics, completion, and hover. Wraps matcha-core."
 keywords = ["editor", "iced", "widget", "text", "gui"]
 categories = ["gui", "text-editors"]
 
