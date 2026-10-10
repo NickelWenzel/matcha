@@ -36,7 +36,7 @@ use std::ops::Range;
 use matcha_core::{
     display_map, BufferRow, ColumnDir, CompletionKind, DocId, Document, FoldMap, Granularity,
     HighlightSpan, HoverInfo, Motion, Point as BufPoint, PopupList, RevealMode, RowLayout, Severity,
-    SignatureInfo, HOVER_IDLE_DELAY_MS,
+    SignatureInfo, WhitespaceKind, WhitespaceMark, HOVER_IDLE_DELAY_MS,
 };
 use matcha_core::intel::inlay;
 use matcha_core::row_layout::{self, Edge, Rows};
@@ -147,6 +147,8 @@ const GUIDE_WIDTH: f32 = 1.0;
 const GUIDE_IDLE_A: f32 = 0.14;
 /// Alpha for the active indent guide.
 const GUIDE_ACTIVE_A: f32 = 0.42;
+/// Whitespace-mark (`·` for a space, `→` for a tab) alpha over the foreground.
+const WHITESPACE_A: f32 = GUIDE_IDLE_A;
 /// Shared floating-popup surface — a neutral dark panel color used by the hover,
 /// signature-help box, and completion popup so the three read as one widget
 /// family (rendered via [`fill_panel`]).
@@ -768,6 +770,8 @@ pub struct Editor<'a, Message> {
     hover_pending: Option<Range<u32>>,
     /// The pending [`Editor::wake_after`] request, if any.
     wake: Option<Wake>,
+    /// Whether spaces and tabs are drawn as faded `·` and `→` marks.
+    show_whitespace: bool,
     font: Font,
     size: f32,
     line_height: f32,
@@ -788,6 +792,7 @@ impl<'a, Message> Editor<'a, Message> {
             inlay_tooltip: None,
             hover_pending: None,
             wake: None,
+            show_whitespace: false,
             font: crate::DEFAULT_FONT,
             size: DEFAULT_SIZE,
             line_height: default_line_height(DEFAULT_SIZE),
@@ -852,6 +857,14 @@ impl<'a, Message> Editor<'a, Message> {
     #[must_use]
     pub fn wake_after(mut self, wake: Option<Wake>) -> Self {
         self.wake = wake;
+        self
+    }
+
+    /// Draw every space as a faded `·` and every tab as a faded `→` at the
+    /// start of its gap. Off by default.
+    #[must_use]
+    pub fn show_whitespace(mut self, show: bool) -> Self {
+        self.show_whitespace = show;
         self
     }
 
@@ -1736,6 +1749,7 @@ impl<Message> Widget<Message, iced::Theme, iced::Renderer> for Editor<'_, Messag
         // Text (line numbers are drawn fixed, above the layer). Iterates DISPLAY
         // rows: a fold's hidden interior is simply not produced, and a folded
         // header gets a trailing `…` placeholder chip.
+        let mark_color = Color { a: WHITESPACE_A, ..text_color };
         for vr in fold_map.visible_rows(window.clone()) {
             let row = vr.buffer_row.0;
             let y = geo.row_y(vr.display_row);
@@ -1745,6 +1759,12 @@ impl<Message> Widget<Message, iced::Theme, iced::Renderer> for Editor<'_, Messag
             // Rows with an inline (single-line) fold draw collapsed — the interior
             // between the brackets hides behind a `…` chip, the rest shifts left.
             let row_layout = rows.layout(BufferRow(row));
+            if self.show_whitespace {
+                for (cell, marks) in whitespace_runs(row_layout.whitespace()) {
+                    let at = Point::new(geo.cell_x(cell as f32), y);
+                    self.draw_line(renderer, marks, at, mark_color, Alignment::Left, code_clip);
+                }
+            }
             if !row_layout.is_plain() {
                 self.draw_row_inline(renderer, &line, spans, origin, &geo, &row_layout, dim, text_color, code_clip);
             } else {
@@ -1797,7 +1817,12 @@ impl<Message> Widget<Message, iced::Theme, iced::Renderer> for Editor<'_, Messag
                         },
                     );
                     let x = geo.cell_x(g.cell as f32);
-                    self.draw_line(renderer, g.ch.to_string(), Point::new(x, y), color, Alignment::Left, code_clip);
+                    let (glyph, color) = match g.ch {
+                        ' ' if self.show_whitespace => ('·', mark_color),
+                        '\t' if self.show_whitespace => ('→', mark_color),
+                        ch => (ch, color),
+                    };
+                    self.draw_line(renderer, glyph.to_string(), Point::new(x, y), color, Alignment::Left, code_clip);
                 }
             }
         }
@@ -3840,6 +3865,29 @@ impl<Message> Editor<'_, Message> {
     }
 }
 
+/// Group a row's whitespace marks into the strings to draw, each at its first
+/// display cell: adjacent spaces share one `·` run, and each tab is a lone `→`.
+fn whitespace_runs(marks: impl IntoIterator<Item = WhitespaceMark>) -> Vec<(u32, String)> {
+    let mut runs: Vec<(u32, String)> = Vec::new();
+    let mut next_space = None;
+    for mark in marks {
+        match mark.kind {
+            WhitespaceKind::Space => {
+                match runs.last_mut() {
+                    Some((_, run)) if next_space == Some(mark.cell) => run.push('·'),
+                    _ => runs.push((mark.cell, "·".to_owned())),
+                }
+                next_space = Some(mark.cell + 1);
+            }
+            WhitespaceKind::Tab { .. } => {
+                runs.push((mark.cell, "→".to_owned()));
+                next_space = None;
+            }
+        }
+    }
+    runs
+}
+
 /// Expand the tabs of a run that starts at raw cell `start_cell` (its
 /// tab-expanded cell before chips and hints shift it), so each tab reaches the
 /// same stop the display map measures.
@@ -4400,6 +4448,33 @@ mod tests {
                 assert_eq!(got, brute, "range [{start}, {end}]");
             }
         }
+    }
+
+    fn ws(cell: u32, kind: WhitespaceKind) -> WhitespaceMark {
+        WhitespaceMark { col: cell, cell, kind }
+    }
+
+    /// Adjacent spaces draw as one run, a tab always stands alone, and a gap
+    /// between two spaces starts a new run.
+    #[test]
+    fn whitespace_runs_group_adjacent_spaces() {
+        let space = WhitespaceKind::Space;
+        let tab = WhitespaceKind::Tab { cells: 2 };
+        let marks = [ws(0, space), ws(1, space), ws(2, tab), ws(4, space), ws(6, space), ws(7, tab), ws(8, tab)];
+        let runs = whitespace_runs(marks);
+        let want = [(0, "··"), (2, "→"), (4, "·"), (6, "·"), (7, "→"), (8, "→")];
+        assert_eq!(runs, want.map(|(cell, run)| (cell, run.to_owned())));
+        assert_eq!(whitespace_runs([]), vec![]);
+    }
+
+    /// A hint between two spaces splits their run, and the second dot lands
+    /// past the hint.
+    #[test]
+    fn a_hint_between_two_spaces_splits_their_run() {
+        let doc = hinted("a  b", &[(2, inlay::Kind::Type, ": T", inlay::Padding::default())]);
+        let rows = doc.rows();
+        let runs = whitespace_runs(rows.layout(BufferRow(0)).whitespace());
+        assert_eq!(runs, vec![(1, "·".to_owned()), (5, "·".to_owned())]);
     }
 
     /// A run that starts off a tab stop expands its tabs from its own raw cell,
@@ -5155,7 +5230,7 @@ mod tests {
         let (w, h) = (500.0_f32, 320.0_f32);
         let cursor = mouse::Cursor::Available(IPoint::new(w / 2.0, h / 2.0));
         let element: iced::Element<'_, (), iced::Theme, iced::Renderer> =
-            Editor::new(&doc, |_: Action| ()).into();
+            Editor::new(&doc, |_: Action| ()).show_whitespace(true).into();
         let mut ui = UserInterface::build(element, Size::new(w, h), Cache::new(), &mut r);
         let mut msgs = shell::Bus::new();
         ui.update(
