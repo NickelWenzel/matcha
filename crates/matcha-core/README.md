@@ -12,7 +12,7 @@ matcha began as a fork of [scrive](https://github.com/robbym/scrive) by Robby Ma
 ![The matcha editor: syntax highlighting, multi-cursor rename, find and replace with match navigation and replace-all, code folding, and completion](https://raw.githubusercontent.com/NickelWenzel/matcha/master/docs/showcase.gif)
 
 <sub>Recorded deterministically, headless — the demo renders itself, no external tools:
-`cargo run -p matcha-iced --features tree-sitter --example record_showcase --release -- docs/showcase.gif`</sub>
+`cargo run -p matcha-iced --features lsp,tree-sitter --example record_showcase --release -- docs/showcase.gif`</sub>
 
 Two crates, with the dependency pointing one way:
 
@@ -184,7 +184,7 @@ later build as they are. Older ones, such as tree-sitter-rust 0.24, fail on
 
 ```bash
 cargo run -p matcha-iced --example minimal   # the CodeEditor quick start above
-cargo run -p matcha-iced --features tree-sitter --example scratch   # the low-level Editor widget, full control
+cargo run -p matcha-iced --features lsp,tree-sitter --example scratch   # the low-level Editor widget, full control
 cargo run -p matcha-iced --features tree-sitter --example tree_sitter   # the quick start with a tree-sitter grammar
 ```
 

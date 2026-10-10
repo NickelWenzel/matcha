@@ -2,8 +2,9 @@
 //!
 //! Renders the REAL `scratch` editor frame-by-frame with the tiny-skia renderer
 //! — no window, no GPU — while a scripted timeline drives it with genuine
-//! keyboard events and app messages (find & replace, fold). Each beat renders
-//! one frame,
+//! keyboard events and app messages (find & replace, fold). The editor talks
+//! to scratch's in-process demo language server, and every beat settles the
+//! conversation before its frame. Each beat renders one frame,
 //! held for its own delay; identical consecutive frames are coalesced. The
 //! frames are encoded straight to an animated GIF with the pure-Rust `gif`
 //! crate, so the recorder needs no external tools. Same script, same GIF, every
@@ -11,7 +12,7 @@
 //!
 //! Run:
 //! ```text
-//! cargo run -p matcha-iced --features tree-sitter --example record_showcase --release -- docs/showcase.gif
+//! cargo run -p matcha-iced --features lsp,tree-sitter --example record_showcase --release -- docs/showcase.gif
 //! ```
 
 #[path = "scratch.rs"]
@@ -203,11 +204,11 @@ fn main() {
     let cursor = mouse::Cursor::Available(Point::new(W as f32 / 2.0, H as f32 / 2.0));
     let theme: Theme = matcha_dark();
 
-    let mut app = App::default();
     // One fixed instant stamps every message and frame: no runtime drives this
     // loop, and a frozen clock keeps time-based state (caret blink) identical on
     // every run.
     let now = Instant::now();
+    let (mut app, mut lsp_events) = App::demo(&scratch::long_sample(), now);
     let mut cache = Cache::new();
     let mut inbox: Vec<Message> = Vec::new();
     let mut ops: Vec<Box<dyn Operation>> = Vec::new();
@@ -230,7 +231,7 @@ fn main() {
     {
         let events = [Event::Window(iced::window::Event::RedrawRequested(now))];
         let mut ui: UserInterface<'_, Message, Theme, iced::Renderer> =
-            UserInterface::build(app.view(), logical, cache, &mut renderer);
+            UserInterface::build(app.editor_view(), logical, cache, &mut renderer);
         let mut published = shell::Bus::new();
         let _ = ui.update(
             &iced::window::Headless,
@@ -247,6 +248,7 @@ fn main() {
                 drain(app.update(m, now), &mut inbox, &mut ops);
             }
         }
+        app.settle(&mut lsp_events, now);
     }
 
     for (steps, hold) in script() {
@@ -264,10 +266,11 @@ fn main() {
                 drain(app.update(m, now), &mut inbox, &mut ops);
             }
         }
+        app.settle(&mut lsp_events, now);
 
         // Build → apply queued widget ops → dispatch events → draw.
         let mut ui: UserInterface<'_, Message, Theme, iced::Renderer> =
-            UserInterface::build(app.view(), logical, cache, &mut renderer);
+            UserInterface::build(app.editor_view(), logical, cache, &mut renderer);
         for mut op in ops.drain(..) {
             ui.operate(&renderer, op.as_mut());
         }
@@ -290,6 +293,7 @@ fn main() {
                 drain(app.update(m, now), &mut inbox, &mut ops);
             }
         }
+        app.settle(&mut lsp_events, now);
 
         // Rasterize offscreen.
         let iced_renderer::fallback::Renderer::Secondary(ts) = &mut renderer else {

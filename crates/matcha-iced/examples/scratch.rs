@@ -1,15 +1,25 @@
 //! `scratch` — the development window used to review the editor by eye.
 //!
 //! ```text
-//! cargo run -p matcha-iced --features tree-sitter --example scratch                              # open the window
-//! cargo run -p matcha-iced --features tree-sitter --example scratch -- --capture out.png         # headless PNG
-//! cargo run -p matcha-iced --features tree-sitter --example scratch -- --capture-folds out.png   # …all folds collapsed
-//! cargo run -p matcha-iced --features tree-sitter --example scratch -- --capture-find out.png    # …find+replace bar open
-//! cargo run -p matcha-iced --features tree-sitter --example scratch -- --capture-whitespace out.png  # whitespace marks
+//! cargo run -p matcha-iced --features lsp,tree-sitter --example scratch                              # open the window
+//! cargo run -p matcha-iced --features lsp,tree-sitter --example scratch -- --capture out.png         # headless PNG
+//! cargo run -p matcha-iced --features lsp,tree-sitter --example scratch -- --capture-folds out.png   # …all folds collapsed
+//! cargo run -p matcha-iced --features lsp,tree-sitter --example scratch -- --capture-find out.png    # …find+replace bar open
+//! cargo run -p matcha-iced --features lsp,tree-sitter --example scratch -- --capture-whitespace out.png  # whitespace marks
+//! cargo run -p matcha-iced --features lsp,tree-sitter --example scratch -- --large 100               # a 100 MB document
 //! ```
 //!
-//! In the window, Ctrl+Shift+W (Cmd+Shift+W on macOS) shows or hides the
-//! whitespace marks: `·` for a space, `→` for a tab.
+//! The editor highlights with tree-sitter and gets its language intelligence from the demo
+//! language server (`shared/demo_server.rs`), which runs in-process on the client's memory
+//! transport, so the window behaves the same natively and in a browser. It answers from the
+//! document's text: an error on each `FIXME` and a warning on each `TODO`, completion, hover,
+//! signature help, F12, F2 rename, Shift+Alt+F formatting, and inlay hints.
+//!
+//! In the window, Ctrl+Shift+W (Cmd+Shift+W on macOS) shows or hides the whitespace marks:
+//! `·` for a space, `→` for a tab. Ctrl+I (Cmd+I) turns the inlay hints off and on.
+//!
+//! The captures render the editor alone, against the demo server with a frozen clock: every
+//! request it would make is answered before the frame, so a capture is identical on every run.
 //!
 //! `--capture-folds` is the fold-geometry verification harness: it collapses
 //! every collapsible pair before rendering, so a refactor of the fold/display
@@ -20,11 +30,8 @@
 //! after 0–3 cells, runs of spaces, trailing spaces, and a folded block and
 //! inline array, so the marks sit beside a chip and on a header's tail.
 //!
-//! This example drives the batteries-included [`matcha_iced::CodeEditor`]: the
-//! app owns the editor, injects stub language-intelligence providers, and wires a
-//! stub compile loop (the debounced `FIXME` / `TODO` re-lint) through the editor's
-//! dirty signal + `set_diagnostics`. `examples/minimal.rs` is the bare-minimum
-//! integration; this one exercises the overrides and the recompile-on-edit hook.
+//! `--large <MB>` opens a synthetic document of that size with the syntect grammar and no
+//! language server: the large-document stress case for the syntect worker pool.
 
 // On Windows, a release build is a GUI app with no console window; debug builds
 // keep the console so panics and the `--capture` messages stay visible.
@@ -32,39 +39,23 @@
 
 #[path = "shared/capture.rs"]
 mod capture;
+#[path = "shared/demo_server.rs"]
+mod demo_server;
 
-use std::ops::Range;
-
+use iced::futures::{FutureExt, StreamExt};
 use iced::keyboard::{self, Key};
-use iced::time::{Duration, Instant};
-use iced::{Element, Subscription, Task, Theme};
+use iced::time::Instant;
+use iced::widget::{column, container, text};
+use iced::{Element, Fill, Subscription, Task, Theme};
 
-use matcha_core::{
-    is_completion_word_char, CompletionCx, CompletionItem, CompletionKind, Completions, Diagnostic,
-    Grammar, Granularity, Hover, HoverCx, HoverInfo, InsertText, Point, Severity, SignatureCx, SignatureHelp,
-    SignatureInfo, SyntaxDef, TreeSitterDef,
-};
-use matcha_iced::{Action, CodeEditor, Event};
+use matcha_core::{Grammar, Granularity, SyntaxDef, TreeSitterDef};
+use matcha_iced::{lsp, Action, CodeEditor, Event};
 
 /// The `--large <MB>` corpus, generated in `main` before the app starts.
 static LARGE_DOC: std::sync::OnceLock<String> = std::sync::OnceLock::new();
 
-/// Skip the demo lint's full-text scan above this size: the stub stands in for a
-/// real compile loop (which consumes snapshots off-thread); scanning a 100 MB
-/// document on the UI thread per keystroke is not what it demonstrates.
-const RELINT_MAX_BYTES: u32 = 2 * 1_048_576;
-
-/// Debounce window for the demo re-lint — a burst of keystrokes coalesces
-/// into at most one whole-document scan per window, mirroring how a real
-/// off-thread compiler would be debounced.
-const RELINT_DEBOUNCE: Duration = Duration::from_millis(250);
-
-// Test-only tally of `App::relint` scan-body executions — the debounce tests
-// read it to prove the whole-document scan runs once per window, not per key.
-#[cfg(test)]
-thread_local! {
-    static RELINT_RUNS: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
-}
+/// Where the demo server files the document.
+const DEMO_URI: &str = "file:///demo/scratch.rs";
 
 /// Synthetic Rust-shaped text for `--large <MB>` — the large-document stress
 /// corpus. Duplicates the bench generator's SHAPE (benches can't be
@@ -95,7 +86,7 @@ fn gen_large(mb: usize) -> String {
 
 /// A document taller than the window, so scrolling is visible. Line numbers are
 /// embedded in the text so it's obvious which rows the viewport is showing.
-fn long_sample() -> String {
+pub fn long_sample() -> String {
     // A small, self-contained Rust program chosen to exercise the editor: nested
     // foldable blocks (impl / fn / match), inline literals, generics, doc comments,
     // and the hover / signature / completion vocabulary.
@@ -168,92 +159,131 @@ const WHITESPACE_SAMPLE: &str = concat!(
     "\t \tmixed \t indent\n",
 );
 
-/// The demo application: it owns a [`CodeEditor`] and runs a stub compile loop
-/// (the debounced `FIXME` / `TODO` re-lint) off the editor's dirty signal — the
-/// recompile-on-edit pattern a real host would use for a language server.
+
+/// The demo application: one [`CodeEditor`] and, except for `--large`, the language server
+/// behind it.
 pub struct App {
     editor: CodeEditor,
-    /// An edit armed the debounced re-lint; a clock-gated tick runs the scan.
-    relint_dirty: bool,
-    /// When the last debounced scan ran (`None` before the first), on the clock
-    /// iced stamps on each message.
-    last_relint: Option<Instant>,
+    lsp: Option<Lsp>,
+    /// The window's one-line status: the server's state and what the last request did.
+    status: String,
+    /// Whether inlay hints show; Ctrl+I flips it.
+    hints: bool,
     /// Whether the editor draws whitespace marks; Ctrl+Shift+W flips it.
     show_whitespace: bool,
 }
 
+/// The client and the server it talks to.
+struct Lsp {
+    client: lsp::Client,
+    server: Server,
+}
+
+enum Server {
+    /// The in-process demo server, which answers only when stepped.
+    Demo { scripted: demo_server::Scripted },
+}
+
 /// The app message: it only ever *maps* the editor's opaque [`Event`] (never
-/// matches on it), plus the app's own debounced re-lint tick.
+/// matches on it), plus the client's events and the app's own chords.
 #[derive(Debug, Clone)]
 pub enum Message {
     /// A message from the editor.
     Editor(Event),
-    /// The debounced stub-compiler tick.
-    Relint,
+    /// An event from the client's stream.
+    Lsp(lsp::client::Event),
     /// Show or hide the whitespace marks.
     ToggleWhitespace,
+    /// Turn inlay hints off or on.
+    ToggleHints,
 }
 
-impl Default for App {
-    fn default() -> Self {
-        Self::new()
+impl Lsp {
+    /// Lets the server answer what the client sent; returns whether it had anything to answer.
+    fn step(&mut self) -> bool {
+        match &mut self.server {
+            Server::Demo { scripted } => scripted.step(),
+        }
     }
 }
 
 impl App {
-    pub fn new() -> Self {
-        // `--large <MB>` swaps in the synthetic corpus (the field-gate doc).
-        // It keeps the syntect grammar, whose worker pool the field gate measures.
-        match LARGE_DOC.get() {
-            Some(source) => Self::with_grammar(
-                source,
-                SyntaxDef::from_sublime_syntax(include_str!("assets/rust.sublime-syntax"))
-                    .expect("bundled Rust grammar parses"),
-            ),
-            None => Self::with_source(&long_sample()),
-        }
+    /// The demo editor over `text`, talking to the demo server, settled at `now`: the
+    /// handshake is done, and the first diagnostics and hints have landed. Run the returned
+    /// stream (or [`settle`](Self::settle) on it) to keep the conversation going.
+    pub fn demo(text: &str, now: Instant) -> (Self, lsp::client::Events) {
+        let (near, far) = lsp::lsp_server::Connection::memory();
+        let (mut client, mut events) = lsp::Client::builder().root(uri("file:///demo/")).memory(near);
+        let mut editor = Self::editor(text, rust());
+        editor.open_lsp(&mut client, &uri(DEMO_URI), "rust").expect("the client has no other document");
+        let mut app = Self::with(editor, Some(Lsp { client, server: Server::Demo { scripted: demo_server::Scripted::new(far) } }));
+        app.status = "demo server".to_owned();
+        app.settle(&mut events, now);
+        (app, events)
     }
 
-    /// The demo editor and its stub providers over `source`.
-    pub fn with_source(source: &str) -> Self {
-        let grammar = TreeSitterDef::new(tree_sitter_rust::LANGUAGE, tree_sitter_rust::HIGHLIGHTS_QUERY)
-            .expect("tree-sitter-rust's highlight query compiles");
-        Self::with_grammar(source, grammar)
+    /// `text` with the syntect grammar and no language server: the `--large` stress case.
+    pub fn large(text: &str) -> Self {
+        let grammar = SyntaxDef::from_sublime_syntax(include_str!("assets/rust.sublime-syntax"))
+            .expect("bundled Rust grammar parses");
+        let mut app = Self::with(Self::editor(text, grammar), None);
+        app.status = "no language server".to_owned();
+        app
     }
 
-    fn with_grammar(source: &str, grammar: impl Into<Grammar>) -> Self {
-        // Grammar + line comment are app-supplied language config (the core ships
-        // neither); the theme defaults to the bundled Matcha Dark. `.language`
-        // colours the document at load — no first scroll needed.
-        let editor = CodeEditor::new(source)
+    fn with(editor: CodeEditor, lsp: Option<Lsp>) -> Self {
+        Self { editor, lsp, status: String::new(), hints: true, show_whitespace: false }
+    }
+
+    /// The editor every mode shares. It sets no completion, hover or signature provider:
+    /// those requests go to the language server.
+    fn editor(text: &str, grammar: impl Into<Grammar>) -> CodeEditor {
+        CodeEditor::new(text)
             .language(grammar)
             .line_comment(Some("//"))
             // Rust: `"` strings; char literals off (`'` is also a lifetime marker),
             // so brackets inside a string like `"{:?}"` are not matched/coloured.
             .bracket_lexing(vec![b'"'], None)
-            .completions(StubCompletions::new())
-            .hover(StubHover)
-            .signature(StubSignatures);
-        let mut app = Self { editor, relint_dirty: false, last_relint: None, show_whitespace: false };
-        app.relint(); // seed the stub diagnostics (the sample carries a TODO)
-        app
+            .rename(true)
+            .inlay_hints(true)
     }
 
     /// `now` is the instant iced stamps on the message (the app runs through
     /// `iced::application::timed`), so the app never reads the clock itself.
     pub fn update(&mut self, message: Message, now: Instant) -> Task<Message> {
-        match message {
+        let task = match message {
             Message::Editor(event) => {
                 let task = self.editor.update(event, now).map(Message::Editor);
-                // An edit arms the debounced re-lint (this app's stand-in for an
-                // off-thread compile), read off the editor's dirty signal.
-                if self.editor.take_dirty() {
-                    self.relint_dirty = true;
+                if let Some(Lsp { client, .. }) = &mut self.lsp {
+                    let synced = self.editor.sync_lsp(client);
+                    self.follow(synced.jump);
                 }
                 task
             }
-            Message::Relint => {
-                self.maybe_relint(now);
+            Message::Lsp(event) => {
+                if let Some(Lsp { client, .. }) = &mut self.lsp {
+                    let mut jumps = Vec::new();
+                    for update in client.receive(event) {
+                        match update {
+                            lsp::Update::Document(document) => {
+                                let applied = self.editor.apply_lsp(client, document);
+                                if let Some(refusal) = applied.refused {
+                                    self.status = format!("refused: {refusal}");
+                                }
+                                jumps.push(applied.jump);
+                            }
+                            lsp::Update::Status(status) => self.status = format!("demo server: {status:?}"),
+                            lsp::Update::Error(error) => self.status = format!("error: {error}"),
+                            lsp::Update::FileEdits(_)
+                            | lsp::Update::Log(_)
+                            | lsp::Update::Notification(_)
+                            | lsp::Update::Trace(_) => {}
+                        }
+                    }
+                    for jump in jumps {
+                        self.follow(jump);
+                    }
+                }
                 Task::none()
             }
             Message::ToggleWhitespace => {
@@ -261,268 +291,102 @@ impl App {
                 self.editor.set_show_whitespace(self.show_whitespace);
                 Task::none()
             }
+            Message::ToggleHints => {
+                self.hints = !self.hints;
+                self.editor.set_inlay_hints(self.hints);
+                self.status = format!("inlay hints {}", if self.hints { "on" } else { "off" });
+                Task::none()
+            }
+        };
+        if let Some(lsp) = &mut self.lsp {
+            lsp.step();
+        }
+        task
+    }
+
+    /// Select a definition the server located, or say where it is when no editor holds it.
+    fn follow(&mut self, mut jump: Option<lsp::update::Jump>) {
+        let Some(Lsp { client, .. }) = &mut self.lsp else { return };
+        while let Some(next) = jump.take() {
+            match next {
+                lsp::update::Jump::Open(open) => match self.editor.jump(client, open) {
+                    Ok(applied) => jump = applied.jump,
+                    Err(refusal) => self.status = format!("jump refused: {refusal}"),
+                },
+                lsp::update::Jump::Unopened(unopened) => {
+                    self.status = format!("definition in {}, which is not open", unopened.uri().as_str());
+                }
+            }
         }
     }
 
+    /// Runs the conversation with the server to its end at `now`, without a runtime: the server
+    /// answers, every event on `events` is handled, and the hint fetch the editor is waiting to
+    /// make is made at once instead of after its delay. Captures, `record_showcase` and the
+    /// tests call it after their scripted input.
+    pub fn settle(&mut self, events: &mut lsp::client::Events, now: Instant) {
+        loop {
+            let stepped = self.lsp.as_mut().is_some_and(Lsp::step);
+            let mut drained = false;
+            while let Some(Some(event)) = events.next().now_or_never() {
+                drained = true;
+                let _ = self.update(Message::Lsp(event), now);
+            }
+            if stepped || drained {
+                continue;
+            }
+            // A wake clears the wait it answers, and only an edit, a scroll or a toggle sets
+            // another, none of which the loop makes, so this ends.
+            match self.editor.pending_wake() {
+                Some(wake) => {
+                    let _ = self.update(Message::Editor(Event::Editor(Action::Wake(wake.generation))), now);
+                }
+                None => break,
+            }
+        }
+    }
+
+    /// The window: the editor over the status line.
     pub fn view(&self) -> Element<'_, Message> {
+        let status = text(self.status.as_str()).size(12).font(matcha_iced::DEFAULT_FONT);
+        column![container(self.editor_view()).width(Fill).height(Fill), container(status).padding([2, 8])].into()
+    }
+
+    /// The editor alone, as the captures render it.
+    pub fn editor_view(&self) -> Element<'_, Message> {
         self.editor.view().map(Message::Editor)
     }
 
     pub fn subscription(&self) -> Subscription<Message> {
-        let editor = self.editor.subscription().map(Message::Editor);
-        // The debounced re-lint tick: frames only while an edit left a pending
-        // re-lint; `maybe_relint`'s clock gate runs the scan at most once/window,
-        // and clearing the flag drops this subscription (idle-zero-work).
-        let relint = if self.relint_dirty {
-            iced::window::frames().map(|_| Message::Relint)
-        } else {
-            Subscription::none()
-        };
-        Subscription::batch([editor, relint, keyboard::listen().filter_map(toggle_chord)])
-    }
-
-    /// The debounced trailing edge of the demo re-lint: if an edit armed a re-lint
-    /// and the window elapsed since the last scan at `now`, run the whole-document stub
-    /// scan once and re-arm. Returns whether it scanned (the debounce tests observe
-    /// this; the app ignores it).
-    fn maybe_relint(&mut self, now: Instant) -> bool {
-        let in_window = self.last_relint.is_some_and(|last| now.saturating_duration_since(last) < RELINT_DEBOUNCE);
-        if !self.relint_dirty || in_window {
-            return false;
-        }
-        self.relint();
-        self.relint_dirty = false;
-        self.last_relint = Some(now);
-        true
-    }
-
-    /// A stub diagnostics pass — a stand-in for the app-side compile loop: flags
-    /// `FIXME` (error) and `TODO` (warning) markers so squiggles, the diagnostic
-    /// hover, F8 navigation, and the scrollbar marks are all exercisable without a
-    /// real language server. Reads the editor's document and publishes through
-    /// `CodeEditor::set_diagnostics` (revision-stamped, dropped if stale).
-    fn relint(&mut self) {
-        if self.editor.document().buffer().len() > RELINT_MAX_BYTES {
-            return; // demo-lint threshold — see RELINT_MAX_BYTES
-        }
-        #[cfg(test)]
-        RELINT_RUNS.with(|c| c.set(c.get() + 1));
-        let mut diags = Vec::new();
-        {
-            let buffer = self.editor.document().buffer();
-            for row in 0..buffer.line_count() {
-                let line = buffer.line(row);
-                let line_start = buffer.point_to_offset(Point::new(row, 0));
-                for (needle, sev, msg) in [
-                    ("FIXME", Severity::Error, "unresolved FIXME (demo lint)"),
-                    ("TODO", Severity::Warning, "unresolved TODO (demo lint)"),
-                ] {
-                    let mut from = 0usize;
-                    while let Some(i) = line[from..].find(needle) {
-                        let start = line_start + (from + i) as u32;
-                        diags.push(Diagnostic::new(start..start + needle.len() as u32, sev, msg));
-                        from = from + i + needle.len();
-                    }
-                }
-            }
-        }
-        let rev = self.editor.document().revision();
-        let _ = self.editor.set_diagnostics(rev, diags);
+        Subscription::batch([self.editor.subscription().map(Message::Editor), keyboard::listen().filter_map(chord)])
     }
 }
 
-/// Ctrl+Shift+W, or Cmd+Shift+W on macOS, without Alt and not repeated. The editor binds no
-/// Ctrl+Shift+W, so the key reaches `keyboard::listen`.
-fn toggle_chord(event: keyboard::Event) -> Option<Message> {
-    match event {
-        keyboard::Event::KeyPressed {
-            key: Key::Character(c),
-            modifiers,
-            repeat: false,
-            ..
-        } if c.eq_ignore_ascii_case("w") && modifiers.command() && modifiers.shift() && !modifiers.alt() => {
-            Some(Message::ToggleWhitespace)
-        }
+/// The app's chords, each with Ctrl (Cmd on macOS), without Alt and not repeated: Shift+W
+/// toggles the whitespace marks and I the inlay hints. The editor binds neither, so they reach
+/// `keyboard::listen`.
+fn chord(event: keyboard::Event) -> Option<Message> {
+    let keyboard::Event::KeyPressed { key: Key::Character(c), modifiers, repeat: false, .. } = event else {
+        return None;
+    };
+    if !modifiers.command() || modifiers.alt() {
+        return None;
+    }
+    match (c.to_ascii_lowercase().as_str(), modifiers.shift()) {
+        ("w", true) => Some(Message::ToggleWhitespace),
+        ("i", false) => Some(Message::ToggleHints),
         _ => None,
     }
 }
 
-/// A stand-in `Hover` provider: a fixed Rust vocabulary → markdown doc, keyed by
-/// the word (the trailing run of the lookback, which runs through the word end).
-struct StubHover;
-
-impl Hover for StubHover {
-    fn hover(&mut self, cx: &HoverCx) -> Option<HoverInfo> {
-        let rev: String = cx.lookback.chars().rev().take_while(|c| is_completion_word_char(*c)).collect();
-        let word: String = rev.chars().rev().collect();
-        let markdown = match word.as_str() {
-            "fn" => "**fn** `name(args) -> ret` — defines a function.",
-            "let" => "**let** — bind a value to a name; add `mut` to allow reassignment.",
-            "mut" => "**mut** — make a binding or reference mutable.",
-            "const" => "**const** — a compile-time constant.",
-            "pub" => "**pub** — export an item from its module.",
-            "use" => "**use** — bring a path into scope.",
-            "mod" => "**mod** — declare a module.",
-            "struct" => "**struct** `Name { fields }` — a named record type.",
-            "enum" => "**enum** `Name { variants }` — a type that is one of several variants.",
-            "impl" => "**impl** — associate methods or a trait with a type.",
-            "trait" => "**trait** — a set of methods a type can implement.",
-            "match" => "**match** `x { pat => expr, … }` — branch on a value's shape.",
-            "for" => "**for** `x in iter { … }` — iterate over an iterator.",
-            "while" => "**while** `cond { … }` — loop while the condition holds.",
-            "loop" => "**loop** — repeat the body forever, until `break`.",
-            "if" => "**if** `cond { … } else { … }` — a conditional.",
-            "else" => "**else** — the branch taken when the `if` condition is false.",
-            "return" => "**return** — return a value from the enclosing function.",
-            "self" => "**self** — the receiver of a method.",
-            "Self" => "**Self** — the type the enclosing `impl` block is for.",
-            "as" => "**as** — a primitive cast, e.g. `n as f64`.",
-            "Option" => "**Option<T>** — either `Some(T)` or `None`.",
-            "Some" => "**Some(T)** — an `Option` that holds a value.",
-            "None" => "**None** — an `Option` that holds nothing.",
-            "Result" => "**Result<T, E>** — either `Ok(T)` or `Err(E)`.",
-            "Vec" => "**Vec<T>** — a growable, heap-allocated array.",
-            "VecDeque" => "**VecDeque<T>** — a double-ended queue.",
-            "String" => "**String** — an owned, growable UTF-8 string.",
-            "u8" => "**u8** — an unsigned 8-bit integer.",
-            "u32" => "**u32** — an unsigned 32-bit integer.",
-            "usize" => "**usize** — a pointer-sized unsigned integer.",
-            "f64" => "**f64** — a 64-bit floating-point number.",
-            "bool" => "**bool** — either `true` or `false`.",
-            "str" => "**str** — a borrowed string slice.",
-            _ => return None,
-        };
-        Some(HoverInfo { markdown: markdown.to_string(), range: cx.word.clone() })
-    }
+fn uri(text: &str) -> lsp::lsp_types::Uri {
+    text.parse().expect("the demo's URIs parse")
 }
 
-/// A stand-in `SignatureHelp` provider: a fixed table of Rust call signatures,
-/// resolved from the enclosing call in the lookback.
-struct StubSignatures;
-
-impl SignatureHelp for StubSignatures {
-    #[allow(clippy::single_range_in_vec_init)] // params is Vec<Range>; some calls have one
-    fn signature(&mut self, cx: &SignatureCx) -> Option<SignatureInfo> {
-        let (name, comma) = enclosing_call(&cx.lookback)?;
-        let (label, params): (&str, Vec<Range<u32>>) = match name.as_str() {
-            "new" => ("new(capacity: usize) -> Samples", vec![4..19]),
-            "with_capacity" => ("with_capacity(capacity: usize) -> VecDeque<T>", vec![14..29]),
-            "push" => ("push(&mut self, reading: f64)", vec![5..14, 16..28]),
-            "push_back" => ("push_back(&mut self, value: T)", vec![10..19, 21..29]),
-            "average" => ("average(&self) -> Option<f64>", vec![8..13]),
-            _ => return None,
-        };
-        let active = comma.min(params.len().saturating_sub(1) as u32);
-        let doc = match name.as_str() {
-            "new" => Some("Create an empty window that keeps at most `capacity` readings.".to_string()),
-            "push" => Some("Record one reading, evicting the oldest once the window is full.".to_string()),
-            "average" => Some("The mean of the retained readings, or `None` when empty.".to_string()),
-            _ => None,
-        };
-        Some(SignatureInfo { label: label.to_string(), params, active, doc })
-    }
-}
-
-/// The innermost unclosed call in `lookback`: the callee name and the top-level
-/// comma count before the caret (the active parameter). Depth-tracked through
-/// `()` / `[]`.
-fn enclosing_call(lookback: &str) -> Option<(String, u32)> {
-    let chars: Vec<char> = lookback.chars().collect();
-    let mut depth = 0i32;
-    let mut commas = 0u32;
-    let mut i = chars.len();
-    while i > 0 {
-        i -= 1;
-        match chars[i] {
-            ')' | ']' => depth += 1,
-            '(' | '[' if depth > 0 => depth -= 1,
-            '(' => {
-                let mut j = i;
-                while j > 0 && is_completion_word_char(chars[j - 1]) {
-                    j -= 1;
-                }
-                let name: String = chars[j..i].iter().collect();
-                return (!name.is_empty()).then_some((name, commas));
-            }
-            ',' if depth == 0 => commas += 1,
-            _ => {}
-        }
-    }
-    None
-}
-
-/// A stand-in `Completions` provider: a fixed Rust vocabulary the controller
-/// prefix-filters.
-struct StubCompletions {
-    items: Vec<CompletionItem>,
-}
-
-impl StubCompletions {
-    fn new() -> Self {
-        let kw = |l: &str| CompletionItem::plain(l, CompletionKind::Keyword);
-        let ty = |l: &str| CompletionItem::plain(l, CompletionKind::Type);
-        Self {
-            items: vec![
-                // Bindings & items.
-                kw("let"),
-                kw("mut"),
-                kw("pub"),
-                kw("const"),
-                kw("use"),
-                kw("mod"),
-                CompletionItem::new("fn", CompletionKind::Construct, InsertText::Snippet("fn ${1:name}(${2:args}) -> ${3:()} {\n\t$0\n}".into()))
-                    .with_detail("name(args) -> ret")
-                    .with_doc("Define a function."),
-                CompletionItem::new("struct", CompletionKind::Construct, InsertText::Snippet("struct ${1:Name} {\n\t$0\n}".into()))
-                    .with_detail("Name { fields }")
-                    .with_doc("Define a record type."),
-                CompletionItem::new("enum", CompletionKind::Construct, InsertText::Snippet("enum ${1:Name} {\n\t$0\n}".into()))
-                    .with_detail("Name { variants }")
-                    .with_doc("Define a variant type."),
-                CompletionItem::new("impl", CompletionKind::Construct, InsertText::Snippet("impl ${1:Type} {\n\t$0\n}".into()))
-                    .with_detail("Type { … }")
-                    .with_doc("Associate methods with a type."),
-                CompletionItem::new("trait", CompletionKind::Construct, InsertText::Snippet("trait ${1:Name} {\n\t$0\n}".into()))
-                    .with_detail("Name { … }")
-                    .with_doc("Define a trait."),
-                // Control flow.
-                CompletionItem::new("match", CompletionKind::Construct, InsertText::Snippet("match ${1:expr} {\n\t${2:pattern} => $0,\n}".into()))
-                    .with_detail("expr { arms }")
-                    .with_doc("Branch on a value's shape."),
-                kw("if"),
-                kw("else"),
-                kw("for"),
-                kw("while"),
-                kw("loop"),
-                kw("break"),
-                kw("continue"),
-                kw("return"),
-                kw("as"),
-                kw("where"),
-                // Types.
-                ty("u8"),
-                ty("u16"),
-                ty("u32"),
-                ty("u64"),
-                ty("usize"),
-                ty("i32"),
-                ty("f64"),
-                ty("bool"),
-                ty("char"),
-                ty("str"),
-                ty("String"),
-                ty("Vec"),
-                ty("Option"),
-                ty("Result"),
-            ],
-        }
-    }
-}
-
-impl Completions for StubCompletions {
-    fn complete(&mut self, _cx: &CompletionCx) -> Vec<CompletionItem> {
-        self.items.clone()
-    }
+/// The tree-sitter Rust grammar.
+fn rust() -> TreeSitterDef {
+    TreeSitterDef::new(tree_sitter_rust::LANGUAGE, tree_sitter_rust::HIGHLIGHTS_QUERY)
+        .expect("tree-sitter-rust's highlight query compiles")
 }
 
 /// An original dark theme for the demo's iced chrome (find bar, popups,
@@ -547,6 +411,27 @@ fn theme(_state: &App) -> Theme {
     matcha_dark()
 }
 
+/// The app a capture renders, at `now`: `--large`'s corpus without a server, else the demo
+/// server on `text`, with the stream [`App::settle`] needs.
+fn headless(text: &str, now: Instant) -> (App, Option<lsp::client::Events>) {
+    match LARGE_DOC.get() {
+        Some(large) => (App::large(large), None),
+        None => {
+            let (app, events) = App::demo(text, now);
+            (app, Some(events))
+        }
+    }
+}
+
+/// Settle `app` and render its editor to `path`.
+fn capture(mut app: App, events: Option<lsp::client::Events>, now: Instant, path: &str) {
+    if let Some(mut events) = events {
+        app.settle(&mut events, now);
+    }
+    let (w, h) = capture::render_to_png(app.editor_view(), 900, 560, &matcha_dark(), &[], path);
+    eprintln!("captured {w}x{h} -> {path}");
+}
+
 fn main() -> iced::Result {
     let args: Vec<String> = std::env::args().collect();
     // `--large <MB>` (default 10): open a synthetic Rust-shaped document of that
@@ -556,24 +441,22 @@ fn main() -> iced::Result {
         let mb: usize = args.get(i + 1).and_then(|s| s.parse().ok()).unwrap_or(10);
         let _ = LARGE_DOC.set(gen_large(mb));
     }
+    // Headless: no iced runtime stamps the messages, so one fixed instant
+    // stands in for all of them.
+    let now = Instant::now();
     if let Some(i) = args.iter().position(|a| a == "--capture") {
         let path = args.get(i + 1).map_or("scratch.png", String::as_str);
-        // `CodeEditor::new(..).language(..)` colours the document at construction
-        // (the cold-load seed), so the visible rows carry their colours with no
-        // viewport report needed.
-        let app = App::new();
-        let (w, h) = capture::render_to_png(app.view(), 900, 560, &matcha_dark(), &[], path);
-        eprintln!("captured {w}x{h} -> {path}");
+        let (app, events) = headless(&long_sample(), now);
+        capture(app, events, now, path);
         return Ok(());
     }
     // Fold-geometry verification harness (see the module doc): collapse every
     // collapsible pair, then render one frame — maximal fold geometry on screen.
     if let Some(i) = args.iter().position(|a| a == "--capture-folds") {
         let path = args.get(i + 1).map_or("scratch-folds.png", String::as_str);
-        let mut app = App::new();
+        let (mut app, events) = headless(&long_sample(), now);
         app.editor.fold_all();
-        let (w, h) = capture::render_to_png(app.view(), 900, 560, &matcha_dark(), &[], path);
-        eprintln!("captured {w}x{h} -> {path}");
+        capture(app, events, now, path);
         return Ok(());
     }
     // Find+replace layout harness (see the module doc): open the bar with the
@@ -581,10 +464,7 @@ fn main() -> iced::Result {
     // frame — chevron, both inputs, the match count, and every button on screen.
     if let Some(i) = args.iter().position(|a| a == "--capture-find") {
         let path = args.get(i + 1).map_or("scratch-find.png", String::as_str);
-        let mut app = App::new();
-        // Headless: no iced runtime stamps the messages, so one fixed instant
-        // stands in for all of them.
-        let now = Instant::now();
+        let (mut app, events) = headless(&long_sample(), now);
         let ev = |e| Message::Editor(e);
         let _ = app.update(ev(Event::OpenReplace), now); // find + the replace row out
         let _ = app.update(ev(Event::FindQuery("self".into())), now);
@@ -603,8 +483,7 @@ fn main() -> iced::Result {
         })), now);
         let _ = app.update(ev(Event::ToggleFindInSelection), now);
         let _ = app.update(ev(Event::FindNext), now); // activate a match ⇒ a real "N of M"
-        let (w, h) = capture::render_to_png(app.view(), 900, 560, &matcha_dark(), &[], path);
-        eprintln!("captured {w}x{h} -> {path}");
+        capture(app, events, now, path);
         return Ok(());
     }
 
@@ -612,15 +491,14 @@ fn main() -> iced::Result {
     // every pair folded and the marks on.
     if let Some(i) = args.iter().position(|a| a == "--capture-whitespace") {
         let path = args.get(i + 1).map_or("scratch-whitespace.png", String::as_str);
-        let mut app = App::with_source(WHITESPACE_SAMPLE);
+        let (mut app, events) = App::demo(WHITESPACE_SAMPLE, now);
         app.editor.fold_all();
-        let _ = app.update(Message::ToggleWhitespace, Instant::now());
-        let (w, h) = capture::render_to_png(app.view(), 900, 560, &matcha_dark(), &[], path);
-        eprintln!("captured {w}x{h} -> {path}");
+        let _ = app.update(Message::ToggleWhitespace, now);
+        capture(app, Some(events), now, path);
         return Ok(());
     }
 
-    let app = iced::application::timed(App::new, App::update, App::subscription, App::view)
+    let app = iced::application::timed(boot, App::update, App::subscription, App::view)
         .title("matcha — scratch")
         .theme(theme);
     // Register every font the widget requires (fold chevrons + find-bar icons)
@@ -628,114 +506,141 @@ fn main() -> iced::Result {
     app.fonts(matcha_iced::required_fonts().iter().copied()).run()
 }
 
+/// The window's app: `--large`'s corpus, or the sample on the demo server, whose events the
+/// runtime delivers from then on.
+fn boot() -> (App, Task<Message>) {
+    match LARGE_DOC.get() {
+        Some(large) => (App::large(large), Task::none()),
+        None => {
+            let (app, events) = App::demo(&long_sample(), Instant::now());
+            (app, Task::run(events, Message::Lsp))
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use iced::keyboard::key::{Code, Physical};
     use iced::keyboard::{Location, Modifiers};
+    use matcha_core::Severity;
 
-    /// Only a plain Ctrl+Shift+W (Cmd+Shift+W on macOS) toggles the marks.
+    /// The demo app on the sample, and the instant every message in a test is stamped with.
+    fn booted() -> (App, lsp::client::Events, Instant) {
+        let now = Instant::now();
+        let (app, events) = App::demo(&long_sample(), now);
+        (app, events, now)
+    }
+
+    fn act(app: &mut App, action: Action, now: Instant) {
+        let _ = app.update(Message::Editor(Event::Editor(action)), now);
+    }
+
+    /// Every diagnostic the editor shows, as `(span, severity)`.
+    fn diagnostics(app: &App) -> Vec<(std::ops::Range<u32>, Severity)> {
+        let document = app.editor.document();
+        document.diagnostics_in(0..document.buffer().len()).map(|(span, severity, _)| (span, severity)).collect()
+    }
+
+    /// The labels of the hints the editor shows, in render order.
+    fn hint_labels(app: &App) -> Vec<String> {
+        let document = app.editor.document();
+        document
+            .inlays_in(0..document.buffer().len())
+            .map(|shown| shown.hint().parts().iter().map(|part| part.text()).collect())
+            .collect()
+    }
+
+    fn scripted(app: &App) -> &demo_server::Scripted {
+        match &app.lsp {
+            Some(Lsp { server: Server::Demo { scripted }, .. }) => scripted,
+            None => panic!("the demo app has a server"),
+        }
+    }
+
     #[test]
-    fn toggle_chord_matches_only_ctrl_shift_w() {
-        let press = |modifiers: Modifiers, repeat: bool| keyboard::Event::KeyPressed {
-            key: Key::Character("W".into()),
-            modified_key: Key::Character("W".into()),
-            physical_key: Physical::Code(Code::KeyW),
+    fn a_typed_fixme_is_flagged_after_a_settle() {
+        let (mut app, mut events, now) = booted();
+        assert!(diagnostics(&app).is_empty(), "the sample has no marker");
+        let start = app.editor.document().buffer().len();
+        act(&mut app, Action::PlaceCaret(start), now);
+        for c in "FIXME".chars() {
+            act(&mut app, Action::Type(c), now);
+        }
+        app.settle(&mut events, now);
+        assert_eq!(diagnostics(&app), [(start..start + 5, Severity::Error)]);
+    }
+
+    /// Edits typed without a settle between them end, once settled, with the server holding the
+    /// editor's text and the diagnostics describing it.
+    #[test]
+    fn a_burst_of_edits_settles_to_current_diagnostics() {
+        let (mut app, mut events, now) = booted();
+        let start = app.editor.document().buffer().len();
+        act(&mut app, Action::PlaceCaret(start), now);
+        for c in "// TODO FIXME".chars() {
+            act(&mut app, Action::Type(c), now);
+        }
+        for _ in 0.."FIXME".len() {
+            act(&mut app, Action::Backspace, now);
+        }
+        app.settle(&mut events, now);
+        let text = app.editor.document().text().into_owned();
+        assert_eq!(scripted(&app).text(DEMO_URI), Some(text.as_str()), "the server saw every edit");
+        let todo = start + "// ".len() as u32;
+        assert_eq!(diagnostics(&app), [(todo..todo + 4, Severity::Warning)], "only the TODO is left");
+    }
+
+    #[test]
+    fn the_sample_gets_its_parameter_and_type_hints() {
+        let (app, _events, _) = booted();
+        assert_eq!(hint_labels(&app), [": Samples", "capacity:"], "`let mut window`, then `Samples::new(4)`");
+    }
+
+    #[test]
+    fn f12_on_samples_selects_its_struct() {
+        let (mut app, mut events, now) = booted();
+        let sample = long_sample();
+        let call = sample.find("Samples::new").expect("main calls Samples::new") as u32;
+        act(&mut app, Action::PlaceCaret(call + 1), now);
+        act(&mut app, Action::GotoDefinition, now);
+        app.settle(&mut events, now);
+        let name = (sample.find("struct Samples").expect("the sample defines Samples") + "struct ".len()) as u32;
+        assert_eq!(app.editor.selection(), name..name + "Samples".len() as u32);
+    }
+
+    #[test]
+    fn large_opens_no_server() {
+        let app = App::large(&gen_large(1));
+        assert!(app.lsp.is_none());
+    }
+
+    /// Ctrl+Shift+W toggles the whitespace marks and Ctrl+I the hints (Cmd on macOS); nothing
+    /// else does.
+    #[test]
+    fn chord_matches_ctrl_shift_w_and_ctrl_i_only() {
+        let press = |c: &str, modifiers: Modifiers, repeat: bool| keyboard::Event::KeyPressed {
+            key: Key::Character(c.into()),
+            modified_key: Key::Character(c.into()),
+            physical_key: Physical::Code(if c.eq_ignore_ascii_case("w") { Code::KeyW } else { Code::KeyI }),
             location: Location::Standard,
             modifiers,
             text: None,
             repeat,
         };
-        assert!(
-            matches!(
-                toggle_chord(press(Modifiers::COMMAND | Modifiers::SHIFT, false)),
-                Some(Message::ToggleWhitespace)
-            ),
-            "Ctrl+Shift+W toggles",
-        );
-        for (modifiers, repeat, chord) in [
-            (Modifiers::COMMAND, false, "Ctrl+W"),
-            (Modifiers::COMMAND | Modifiers::SHIFT | Modifiers::ALT, false, "Ctrl+Shift+Alt+W"),
-            (Modifiers::COMMAND | Modifiers::SHIFT, true, "a repeated Ctrl+Shift+W"),
-            (Modifiers::SHIFT, false, "a plain W"),
+        assert!(matches!(chord(press("W", Modifiers::COMMAND | Modifiers::SHIFT, false)), Some(Message::ToggleWhitespace)));
+        assert!(matches!(chord(press("i", Modifiers::COMMAND, false)), Some(Message::ToggleHints)));
+        for (c, modifiers, repeat, what) in [
+            ("W", Modifiers::COMMAND, false, "Ctrl+W"),
+            ("W", Modifiers::COMMAND | Modifiers::SHIFT | Modifiers::ALT, false, "Ctrl+Shift+Alt+W"),
+            ("W", Modifiers::COMMAND | Modifiers::SHIFT, true, "a repeated Ctrl+Shift+W"),
+            ("W", Modifiers::SHIFT, false, "a plain W"),
+            ("I", Modifiers::COMMAND | Modifiers::SHIFT, false, "Ctrl+Shift+I"),
+            ("i", Modifiers::COMMAND | Modifiers::ALT, false, "Ctrl+Alt+I"),
+            ("i", Modifiers::COMMAND, true, "a repeated Ctrl+I"),
+            ("i", Modifiers::empty(), false, "a plain i"),
         ] {
-            assert!(toggle_chord(press(modifiers, repeat)).is_none(), "{chord} does not toggle");
+            assert!(chord(press(c, modifiers, repeat)).is_none(), "{what} is no chord");
         }
-    }
-
-    /// The stub compile loop is debounced OFF the keystroke path: a burst of edits
-    /// arms one re-lint, and only the trailing tick past the window runs the single
-    /// whole-document scan. Proves recompile-on-edit driven by the editor's dirty
-    /// signal coalesces correctly.
-    #[test]
-    fn relint_debounces_off_the_keystroke_path() {
-        let mut app = App::new();
-        // The seed scan (`App::new`) already ran once — measure the delta.
-        let base = RELINT_RUNS.with(std::cell::Cell::get);
-
-        // Anchor the debounce window at a fixed fake "now"; start clean so only the
-        // edits below can arm a re-lint.
-        let t0 = Instant::now();
-        app.last_relint = Some(t0);
-        app.relint_dirty = false;
-
-        // A burst of keystrokes, all inside one debounce window. Each edit only
-        // arms the flag (via the editor's dirty signal); ticks arriving mid-burst
-        // are gated → no scan runs.
-        const N: usize = 25;
-        for _ in 0..N {
-            let _ = app.update(Message::Editor(Event::Editor(Action::Type('x'))), t0);
-            assert!(!app.maybe_relint(t0 + Duration::from_millis(10)), "a tick inside the window must not scan");
-        }
-        assert_eq!(RELINT_RUNS.with(std::cell::Cell::get) - base, 0, "the burst ran ZERO whole-doc scans");
-        assert!(app.relint_dirty, "a trailing scan is still pending");
-
-        // The trailing-edge tick after the window elapses runs exactly one scan.
-        assert!(app.maybe_relint(t0 + RELINT_DEBOUNCE + Duration::from_millis(1)), "the trailing tick scans");
-        assert_eq!(RELINT_RUNS.with(std::cell::Cell::get) - base, 1, "exactly one scan for the whole burst");
-        assert!(!app.relint_dirty, "flag cleared after the scan");
-
-        // Further idle ticks are no-ops (no re-scan while clean).
-        assert!(!app.maybe_relint(t0 + 10 * RELINT_DEBOUNCE), "idle: no re-scan");
-        assert_eq!(RELINT_RUNS.with(std::cell::Cell::get) - base, 1, "still one");
-    }
-
-    /// The debounced trailing scan makes diagnostics CURRENT: a `FIXME` typed
-    /// during the window is not flagged until the scan fires — proving the scan
-    /// genuinely re-runs the whole-document pass, not merely toggling a flag.
-    #[test]
-    fn relint_trailing_scan_makes_diagnostics_current() {
-        let mut app = App::new();
-        let t0 = Instant::now();
-        app.last_relint = Some(t0);
-        app.relint_dirty = false;
-
-        // Type a fresh `FIXME` at the end of the buffer (no existing diagnostic
-        // there, so the check is independent of the sample's contents).
-        let start = app.editor.document().buffer().len();
-        let _ = app.update(Message::Editor(Event::Editor(Action::PlaceCaret(start))), t0);
-        for ch in "FIXME".chars() {
-            let _ = app.update(Message::Editor(Event::Editor(Action::Type(ch))), t0);
-        }
-        let typed = start..start + 5;
-
-        // Inside the window: no scan yet, so the new marker is NOT flagged
-        // (diagnostics only ride existing positions via stickiness).
-        assert!(!app.maybe_relint(t0 + Duration::from_millis(10)), "still inside the debounce window");
-        let flagged_before = app
-            .editor
-            .document()
-            .diagnostics_in(typed.clone())
-            .any(|(r, sev, _)| r == typed && matches!(sev, Severity::Error));
-        assert!(!flagged_before, "the freshly-typed FIXME is not flagged mid-burst");
-
-        // The trailing scan brings diagnostics current.
-        assert!(app.maybe_relint(t0 + RELINT_DEBOUNCE + Duration::from_millis(1)), "the trailing tick scans");
-        let flagged_after = app
-            .editor
-            .document()
-            .diagnostics_in(typed.clone())
-            .any(|(r, sev, _)| r == typed && matches!(sev, Severity::Error));
-        assert!(flagged_after, "after the debounced scan the FIXME is flagged");
     }
 }

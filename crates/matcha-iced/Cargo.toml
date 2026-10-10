@@ -73,13 +73,13 @@ required-features = ["syntect"]
 
 [[example]]
 name = "scratch"
-required-features = ["syntect", "tree-sitter"]
+required-features = ["lsp", "syntect", "tree-sitter"]
 test = true
 
 # Records the scratch example, which it includes.
 [[example]]
 name = "record_showcase"
-required-features = ["syntect", "tree-sitter"]
+required-features = ["lsp", "syntect", "tree-sitter"]
 
 [[example]]
 name = "lsp"
