@@ -4,15 +4,15 @@
 //! cargo run -p matcha-iced --features lsp --example lsp
 //! ```
 //!
-//! The server (`server.rs`) runs in-process on the memory bridge, so there's no process to
-//! start. It answers `initialize`, completion, signature help and hover with canned JSON, and
-//! computes diagnostics (trailing whitespace), goto definition, rename, formatting and inlay
-//! hints from the text the client sent it. The right-hand panel shows the client's traces. Try:
+//! The server (`shared/demo_server.rs`) runs in-process on the memory bridge, so there's no
+//! process to start. It computes its answers from the text the client sent it: diagnostics on
+//! `TODO` and `FIXME`, completion, signature help, hover, goto definition, rename, formatting
+//! and inlay hints. The right-hand panel shows the client's traces. Try:
 //!
 //! - F12 on `greet` in main.rs: the util.rs tab opens with the definition selected;
 //! - F2 on `greet`, type a new name, Enter: both files change;
-//! - Shift+Alt+F: the trailing whitespace goes, and so do its warnings;
-//! - typing, `(`, and hovering `greet`: the canned completion, signature and hover;
+//! - Shift+Alt+F: the trailing whitespace goes;
+//! - typing, `(`, and hovering `greet`: completion, its signature and its doc;
 //! - Ctrl+click `name` in the parameter hint: the util.rs tab opens with the parameter selected;
 //! - Ctrl+click `String` in the type hint: the panel notes the jump into an unopened file;
 //! - double-click the type hint: `: String` is inserted, and the hint goes;
@@ -45,10 +45,10 @@ const ROOT: &str = "file:///demo/";
 const MAIN_URI: &str = "file:///demo/main.rs";
 const UTIL_URI: &str = "file:///demo/util.rs";
 
-/// The demo files. Some lines end in spaces on purpose: the server flags them, and formatting
-/// removes them.
-const MAIN_RS: &str = "mod util;\n\nfn main() {   \n    let message = util::greet(\"matcha\");  \n    println!(\"{message}\");\n}\n";
-const UTIL_RS: &str = "/// Builds a greeting for `name`.\npub fn greet(name: &str) -> String {  \n    format!(\"hello, {name}\")\n}\n\npub fn farewell(name: &str) -> String {\n    format!(\"goodbye, {name}\")\n}\n";
+/// The demo files. Each has a marker the server flags, and some lines end in spaces on purpose:
+/// formatting removes them.
+const MAIN_RS: &str = "mod util;\n\nfn main() {   \n    // TODO: say goodbye too\n    let message = util::greet(\"matcha\");  \n    println!(\"{message}\");\n}\n";
+const UTIL_RS: &str = "/// Builds a greeting for `name`.\npub fn greet(name: &str) -> String {  \n    // FIXME: pick the language from the locale\n    format!(\"hello, {name}\")\n}\n\npub fn farewell(name: &str) -> String {\n    format!(\"goodbye, {name}\")\n}\n";
 
 /// How many lines the traffic panel keeps.
 const TRAFFIC_LINES: usize = 200;
@@ -436,20 +436,12 @@ mod tests {
         document.diagnostics_in(0..document.buffer().len()).count()
     }
 
-    /// The server's first publish reaches both editors: main.rs has two padded lines, util.rs one.
+    /// The server's first publish reaches both editors: main.rs has a TODO, util.rs a FIXME.
     #[test]
     fn diagnostics_land_in_both_documents() {
         let (app, _events) = booted();
-        assert_eq!(
-            diagnostics(&app, MAIN),
-            2,
-            "main.rs shows both trailing-whitespace warnings"
-        );
-        assert_eq!(
-            diagnostics(&app, UTIL),
-            1,
-            "util.rs shows its trailing-whitespace warning"
-        );
+        assert_eq!(diagnostics(&app, MAIN), 1, "main.rs shows its TODO");
+        assert_eq!(diagnostics(&app, UTIL), 1, "util.rs shows its FIXME");
     }
 
     /// F12 on a call in main.rs lands in util.rs: that tab becomes active with the function's
@@ -494,26 +486,20 @@ mod tests {
     }
 
     /// Shift+Alt+F strips trailing whitespace: the whole-document reply is diffed down to the
-    /// padded lines, synced back, and the server's next publish clears the warnings.
+    /// padded lines and synced back, and nothing else changes.
     #[test]
     fn format_strips_trailing_whitespace() {
         let (mut app, mut events) = booted();
         press(&mut app, &mut events, MAIN, Event::Editor(Action::Format));
         let text = text_of(&app, MAIN);
-        assert!(
-            text.lines().all(|line| line == line.trim_end()),
-            "no line of main.rs ends in whitespace"
-        );
+        let stripped: Vec<&str> = MAIN_RS.split('\n').map(str::trim_end).collect();
+        assert_eq!(text, stripped.join("\n"), "only the trailing whitespace of main.rs is gone");
         assert_eq!(
             app.server.text(MAIN_URI),
             Some(text.as_str()),
             "the server saw the formatted text"
         );
-        assert_eq!(
-            diagnostics(&app, MAIN),
-            0,
-            "the warnings went with the whitespace"
-        );
+        assert_eq!(diagnostics(&app, MAIN), 1, "the TODO is still flagged");
     }
 
     /// The panel shows both directions: the client's initialize request, and the server's
