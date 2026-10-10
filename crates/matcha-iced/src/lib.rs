@@ -19,7 +19,7 @@
 //!   See `examples/minimal.rs`.
 //! - [`Editor`] — the low-level *controlled* widget: it renders a `Document` and
 //!   emits semantic [`Action`]s the application applies by hand. Full control,
-//!   all the plumbing on you. See `examples/scratch.rs`.
+//!   all the plumbing on you.
 //!
 //! The minimal integration:
 //!

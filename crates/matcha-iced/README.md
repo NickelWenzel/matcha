@@ -292,8 +292,8 @@ it, and Ctrl+I to turn them off and on.
 ## Web (wasm32)
 
 All three crates build for `wasm32-unknown-unknown`, and every example runs in
-the browser; there `scratch` talks to the demo server. The web has no system fonts, so on wasm32 the editor's default font is
-the bundled Fira Code ([`FIRA_CODE_FONT`](https://docs.rs/matcha-iced/latest/matcha_iced/constant.FIRA_CODE_FONT.html)), with its ligatures,
+the browser; there `scratch` talks to the demo server. The web has no system
+fonts, so on wasm32 the editor's default font is the bundled Fira Code ([`FIRA_CODE_FONT`](https://docs.rs/matcha-iced/latest/matcha_iced/constant.FIRA_CODE_FONT.html)), with its ligatures,
 which `required_fonts()` includes there. Enable iced's `fira-sans` feature for
 UI text such as the find bar, and `webgl` for browsers without WebGPU. There
 are no threads, so a large document is highlighted on the UI thread instead of
@@ -309,8 +309,10 @@ the matching `wasm-bindgen` itself):
 
 ```bash
 cd crates/matcha-iced
-trunk serve --release --example minimal   # or: --example scratch
+trunk serve --release --example minimal
 trunk serve --release --example lsp --features lsp
+eval "$(../../scripts/wasm-cflags.sh)"   # tree-sitter-rust needs the wasm libc headers
+trunk serve --release --example scratch --features lsp,tree-sitter
 ```
 
 ## License

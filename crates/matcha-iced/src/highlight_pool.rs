@@ -10,9 +10,8 @@
 //! GUESSED fresh state (speculative), then verified in place. matcha-core stays
 //! synchronous and thread-free; all threading lives here.
 //!
-//! This mirrors the pool in `examples/scratch.rs` (which drives the low-level
-//! widget by hand); `CodeEditor` owns this copy so a batteries-included host gets
-//! large-document highlighting without wiring a worker pool itself.
+//! `CodeEditor` owns the pool, so a batteries-included host gets large-document
+//! highlighting without wiring a worker pool itself.
 
 use std::ops::Range;
 

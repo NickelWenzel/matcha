@@ -7,8 +7,7 @@
 //!
 //! Everything else — syntax highlighting (coloured at load, no scroll needed),
 //! the find bar (Ctrl+F / Ctrl+H), selection, undo, folding — is on by default.
-//! Compare with `scratch.rs`, which drives the low-level [`matcha_iced::Editor`]
-//! widget by hand for full control.
+//! `scratch.rs` builds on the same widget with a language server.
 
 use iced::time::Instant;
 use iced::{Element, Subscription, Task};

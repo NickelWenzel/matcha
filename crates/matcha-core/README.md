@@ -184,12 +184,13 @@ later build as they are. Older ones, such as tree-sitter-rust 0.24, fail on
 
 ```bash
 cargo run -p matcha-iced --example minimal   # the CodeEditor quick start above
-cargo run -p matcha-iced --features lsp,tree-sitter --example scratch   # the low-level Editor widget, full control
+cargo run -p matcha-iced --features lsp,tree-sitter --example scratch   # rust-analyzer, on a scratch crate
 cargo run -p matcha-iced --features tree-sitter --example tree_sitter   # the quick start with a tree-sitter grammar
 ```
 
-`scratch` opens a real editor over a sample Rust document — type, select, find
-(Ctrl+F), fold, and undo/redo.
+`scratch` opens a real editor on rust-analyzer over a sample Rust document —
+type, select, find (Ctrl+F), fold, and undo/redo, with hover, completion and
+inlay hints.
 
 ## License
 

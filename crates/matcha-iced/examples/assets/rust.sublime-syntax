@@ -1,7 +1,8 @@
 %YAML 1.2
 ---
-# Compact Rust grammar for the scratch editor demo. App-supplied asset —
-# matcha-core ships no grammar. Standard TextMate scopes so any theme colors it.
+# Compact Rust grammar for the syntect examples (minimal, lsp, scratch --large).
+# App-supplied asset — matcha-core ships no grammar. Standard TextMate scopes so
+# any theme colors it.
 name: Rust
 file_extensions:
   - rs
