@@ -284,6 +284,8 @@ pub struct CodeEditor {
     rename_enabled: bool,
     /// The open rename field. Only one floating bar is open at a time.
     rename: Option<Rename>,
+    /// Whether spaces and tabs are drawn as `·` and `→` marks.
+    show_whitespace: bool,
     /// Mints the ticket every async request carries. Per editor, so two
     /// requests at one revision still differ.
     tickets: ticket::Counter,
@@ -435,6 +437,7 @@ impl CodeEditor {
             inlay_card: None,
             rename_enabled: false,
             rename: None,
+            show_whitespace: false,
             tickets: ticket::Counter::new(),
             awaiting: Awaiting::default(),
             items_caret: 0,
@@ -521,6 +524,14 @@ impl CodeEditor {
     #[must_use]
     pub fn inlay_hints(mut self, enabled: bool) -> Self {
         self.set_inlay_hints(enabled);
+        self
+    }
+
+    /// Draw every space as a faded `·` and every tab as a faded `→`. Default
+    /// off.
+    #[must_use]
+    pub fn show_whitespace(mut self, show: bool) -> Self {
+        self.set_show_whitespace(show);
         self
     }
 
@@ -812,6 +823,12 @@ impl CodeEditor {
     pub fn select(&mut self, range: Range<u32>) {
         self.doc.select_and_reveal(range);
         self.after_edit(CompletionEvent::CaretOrClose);
+    }
+
+    /// Turn the whitespace marks of
+    /// [`show_whitespace`](CodeEditor::show_whitespace) on or off at runtime.
+    pub fn set_show_whitespace(&mut self, show: bool) {
+        self.show_whitespace = show;
     }
 
     /// Turn inlay hints on or off at runtime. On asks for the visible rows'
@@ -1340,6 +1357,7 @@ impl CodeEditor {
             )
             .inlay_tooltip(self.inlay_card.as_ref().map(|card| (card.key, card.part, card.markdown.as_str())))
             .wake_after(self.inlays.wait)
+            .show_whitespace(self.show_whitespace)
             .font(self.font)
             .text_size(self.text_size)
             .id(self.id.clone());

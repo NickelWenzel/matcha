@@ -49,6 +49,7 @@ Three crates, with every dependency pointing one way:
   literals are skipped (opt-in per language; line-local).
 - **Code folding** — foldable ranges, gutter chevrons, nested and inline
   (sub-line) collapse, and fold-aware movement.
+- **Visible whitespace** (optional) — spaces drawn as `·` and tabs as `→`.
 - **Find and replace** — literal, whole-word, or regex search (with `$1` capture
   groups in the replacement), find-in-selection, case-preserving replace, and
   replace / replace-all as a single undo step. The match set is repaired per
