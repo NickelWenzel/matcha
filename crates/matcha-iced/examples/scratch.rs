@@ -5,12 +5,20 @@
 //! cargo run -p matcha-iced --example scratch -- --capture out.png         # headless PNG
 //! cargo run -p matcha-iced --example scratch -- --capture-folds out.png   # …all folds collapsed
 //! cargo run -p matcha-iced --example scratch -- --capture-find out.png    # …find+replace bar open
+//! cargo run -p matcha-iced --example scratch -- --capture-whitespace out.png  # whitespace marks
 //! ```
+//!
+//! In the window, Ctrl+Shift+W (Cmd+Shift+W on macOS) shows or hides the
+//! whitespace marks: `·` for a space, `→` for a tab.
 //!
 //! `--capture-folds` is the fold-geometry verification harness: it collapses
 //! every collapsible pair before rendering, so a refactor of the fold/display
 //! projections can be byte-diffed against a baseline PNG (chips, collapsed
 //! tails, gutter fold gaps all on screen at once).
+//!
+//! `--capture-whitespace` renders a dedicated sample with the marks on: tabs
+//! after 0–3 cells, runs of spaces, trailing spaces, and a folded block and
+//! inline array, so the marks sit beside a chip and on a header's tail.
 //!
 //! This example drives the batteries-included [`matcha_iced::CodeEditor`]: the
 //! app owns the editor, injects stub language-intelligence providers, and wires a
@@ -27,6 +35,7 @@ mod capture;
 
 use std::ops::Range;
 
+use iced::keyboard::{self, Key};
 use iced::time::{Duration, Instant};
 use iced::{Element, Subscription, Task, Theme};
 
@@ -141,6 +150,24 @@ fn main() {
     .to_string()
 }
 
+/// The `--capture-whitespace` document: every way whitespace lands in a row.
+/// `fold_all` collapses both bracket pairs, so marks sit on the block header's
+/// `} // end` tail and on both sides of the inline `[ … ]` chip.
+const WHITESPACE_SAMPLE: &str = concat!(
+    "// Whitespace marks: a dot per space, an arrow per tab.\n",
+    "\tafter 0 cells\n",
+    "a\tafter 1 cell\n",
+    "ab\tafter 2 cells\n",
+    "abc\tafter 3 cells\n",
+    "let  spaced   out    = 4;\n",
+    "let trailing = 1;   \n",
+    "fn folded() {\n",
+    "    let hidden = 2;\n",
+    "} // end  \n",
+    "let list = [1,  2,\t3];  \n",
+    "\t \tmixed \t indent\n",
+);
+
 /// The demo application: it owns a [`CodeEditor`] and runs a stub compile loop
 /// (the debounced `FIXME` / `TODO` re-lint) off the editor's dirty signal — the
 /// recompile-on-edit pattern a real host would use for a language server.
@@ -151,6 +178,8 @@ pub struct App {
     /// When the last debounced scan ran (`None` before the first), on the clock
     /// iced stamps on each message.
     last_relint: Option<Instant>,
+    /// Whether the editor draws whitespace marks; Ctrl+Shift+W flips it.
+    show_whitespace: bool,
 }
 
 /// The app message: it only ever *maps* the editor's opaque [`Event`] (never
@@ -161,6 +190,8 @@ pub enum Message {
     Editor(Event),
     /// The debounced stub-compiler tick.
     Relint,
+    /// Show or hide the whitespace marks.
+    ToggleWhitespace,
 }
 
 impl Default for App {
@@ -172,14 +203,14 @@ impl Default for App {
 impl App {
     pub fn new() -> Self {
         // `--large <MB>` swaps in the synthetic corpus (the field-gate doc).
-        let sample;
-        let source: &str = match LARGE_DOC.get() {
-            Some(s) => s,
-            None => {
-                sample = long_sample();
-                &sample
-            }
-        };
+        match LARGE_DOC.get() {
+            Some(source) => Self::with_source(source),
+            None => Self::with_source(&long_sample()),
+        }
+    }
+
+    /// The demo editor and its stub providers over `source`.
+    pub fn with_source(source: &str) -> Self {
         // Grammar + line comment are app-supplied language config (the core ships
         // neither); the theme defaults to the bundled Matcha Dark. `.language`
         // colours the document at load — no first scroll needed.
@@ -194,7 +225,7 @@ impl App {
             .completions(StubCompletions::new())
             .hover(StubHover)
             .signature(StubSignatures);
-        let mut app = Self { editor, relint_dirty: false, last_relint: None };
+        let mut app = Self { editor, relint_dirty: false, last_relint: None, show_whitespace: false };
         app.relint(); // seed the stub diagnostics (the sample carries a TODO)
         app
     }
@@ -216,6 +247,11 @@ impl App {
                 self.maybe_relint(now);
                 Task::none()
             }
+            Message::ToggleWhitespace => {
+                self.show_whitespace = !self.show_whitespace;
+                self.editor.set_show_whitespace(self.show_whitespace);
+                Task::none()
+            }
         }
     }
 
@@ -233,7 +269,7 @@ impl App {
         } else {
             Subscription::none()
         };
-        Subscription::batch([editor, relint])
+        Subscription::batch([editor, relint, keyboard::listen().filter_map(toggle_chord)])
     }
 
     /// The debounced trailing edge of the demo re-lint: if an edit armed a re-lint
@@ -283,6 +319,22 @@ impl App {
         }
         let rev = self.editor.document().revision();
         let _ = self.editor.set_diagnostics(rev, diags);
+    }
+}
+
+/// Ctrl+Shift+W, or Cmd+Shift+W on macOS, without Alt and not repeated. The editor binds no
+/// Ctrl+Shift+W, so the key reaches `keyboard::listen`.
+fn toggle_chord(event: keyboard::Event) -> Option<Message> {
+    match event {
+        keyboard::Event::KeyPressed {
+            key: Key::Character(c),
+            modifiers,
+            repeat: false,
+            ..
+        } if c.eq_ignore_ascii_case("w") && modifiers.command() && modifiers.shift() && !modifiers.alt() => {
+            Some(Message::ToggleWhitespace)
+        }
+        _ => None,
     }
 }
 
@@ -547,6 +599,18 @@ fn main() -> iced::Result {
         return Ok(());
     }
 
+    // Whitespace-mark harness (see the module doc): the dedicated sample with
+    // every pair folded and the marks on.
+    if let Some(i) = args.iter().position(|a| a == "--capture-whitespace") {
+        let path = args.get(i + 1).map_or("scratch-whitespace.png", String::as_str);
+        let mut app = App::with_source(WHITESPACE_SAMPLE);
+        app.editor.fold_all();
+        let _ = app.update(Message::ToggleWhitespace, Instant::now());
+        let (w, h) = capture::render_to_png(app.view(), 900, 560, &matcha_dark(), &[], path);
+        eprintln!("captured {w}x{h} -> {path}");
+        return Ok(());
+    }
+
     let app = iced::application::timed(App::new, App::update, App::subscription, App::view)
         .title("matcha — scratch")
         .theme(theme);
@@ -558,6 +622,37 @@ fn main() -> iced::Result {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use iced::keyboard::key::{Code, Physical};
+    use iced::keyboard::{Location, Modifiers};
+
+    /// Only a plain Ctrl+Shift+W (Cmd+Shift+W on macOS) toggles the marks.
+    #[test]
+    fn toggle_chord_matches_only_ctrl_shift_w() {
+        let press = |modifiers: Modifiers, repeat: bool| keyboard::Event::KeyPressed {
+            key: Key::Character("W".into()),
+            modified_key: Key::Character("W".into()),
+            physical_key: Physical::Code(Code::KeyW),
+            location: Location::Standard,
+            modifiers,
+            text: None,
+            repeat,
+        };
+        assert!(
+            matches!(
+                toggle_chord(press(Modifiers::COMMAND | Modifiers::SHIFT, false)),
+                Some(Message::ToggleWhitespace)
+            ),
+            "Ctrl+Shift+W toggles",
+        );
+        for (modifiers, repeat, chord) in [
+            (Modifiers::COMMAND, false, "Ctrl+W"),
+            (Modifiers::COMMAND | Modifiers::SHIFT | Modifiers::ALT, false, "Ctrl+Shift+Alt+W"),
+            (Modifiers::COMMAND | Modifiers::SHIFT, true, "a repeated Ctrl+Shift+W"),
+            (Modifiers::SHIFT, false, "a plain W"),
+        ] {
+            assert!(toggle_chord(press(modifiers, repeat)).is_none(), "{chord} does not toggle");
+        }
+    }
 
     /// The stub compile loop is debounced OFF the keystroke path: a burst of edits
     /// arms one re-lint, and only the trailing tick past the window runs the single

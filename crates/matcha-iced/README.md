@@ -276,16 +276,17 @@ cargo run -p matcha-iced --features lsp --example rust_analyzer -- path/to/file.
 ```
 
 `scratch` opens a real editor over a sample Rust document — type, select, find
-(Ctrl+F), fold, and undo/redo. `lsp` shows the traffic panel next to the
-editor. Press F12 on `greet`, F2 to rename it across both files, or Shift+Alt+F
-to format. Its main.rs shows inlay hints: Ctrl+click `name:` to jump to the
-parameter, double-click `: String` to insert it, and Ctrl+I to turn them off and
-on. `rust_analyzer` is native only and needs rust-analyzer on `PATH`. It runs
-the server over stdio, shows its status and latest log line under the editor,
-restarts it if it crashes, and shuts it down when the window closes. Its
-`cargo check` diagnostics refresh when you save with Ctrl+S (Cmd+S on macOS),
-and the button by the status line turns check-on-save off and on. It shows
-rust-analyzer's inlay hints; Ctrl+I toggles them.
+(Ctrl+F), fold, and undo/redo. Ctrl+Shift+W (Cmd+Shift+W on macOS) turns the
+whitespace marks on and off: `·` for a space, `→` for a tab. `lsp` shows the
+traffic panel next to the editor. Press F12 on `greet`, F2 to rename it across
+both files, or Shift+Alt+F to format. Its main.rs shows inlay hints: Ctrl+click
+`name:` to jump to the parameter, double-click `: String` to insert it, and
+Ctrl+I to turn them off and on. `rust_analyzer` is native only and needs
+rust-analyzer on `PATH`. It runs the server over stdio, shows its status and
+latest log line under the editor, restarts it if it crashes, and shuts it down
+when the window closes. Its `cargo check` diagnostics refresh when you save with
+Ctrl+S (Cmd+S on macOS), and the button by the status line turns check-on-save
+off and on. It shows rust-analyzer's inlay hints; Ctrl+I toggles them.
 
 ## Web (wasm32)
 

@@ -148,7 +148,9 @@ const GUIDE_IDLE_A: f32 = 0.14;
 /// Alpha for the active indent guide.
 const GUIDE_ACTIVE_A: f32 = 0.42;
 /// Whitespace-mark (`·` for a space, `→` for a tab) alpha over the foreground.
-const WHITESPACE_A: f32 = GUIDE_IDLE_A;
+/// Above [`GUIDE_IDLE_A`]: a dot's or arrow's few pixels fade out at the alpha
+/// that still shows a full-height guide line.
+const WHITESPACE_A: f32 = 0.22;
 /// Shared floating-popup surface — a neutral dark panel color used by the hover,
 /// signature-help box, and completion popup so the three read as one widget
 /// family (rendered via [`fill_panel`]).
