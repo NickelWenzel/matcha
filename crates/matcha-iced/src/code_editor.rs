@@ -3760,4 +3760,14 @@ mod tests {
         assert_eq!(span, 0..row_start(580), "display rows 0..90 are buffer rows 0..580, the fold included");
         assert_eq!(ed.inlays.window, Some(0..550), "the inner window ends at display row 60");
     }
+
+    #[test]
+    fn add_caret_vertical_stacks_a_column_that_types_together() {
+        let mut ed = CodeEditor::new("aaa\nbbb\nccc");
+        ed.select(5..5);
+        act(&mut ed, Action::AddCaretVertical { down: false });
+        act(&mut ed, Action::AddCaretVertical { down: true });
+        act(&mut ed, Action::Type('X'));
+        assert_eq!(ed.document().text(), "aXaa\nbXbb\ncXcc");
+    }
 }
