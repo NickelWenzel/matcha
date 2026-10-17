@@ -302,7 +302,8 @@ pub enum Action {
     RemoveNewestCaret,
     /// Select every occurrence of the selection (Ctrl+Shift+L).
     SelectAllOccurrences,
-    /// Add a caret one display row above/below every caret (Ctrl+Alt+↑/↓).
+    /// Add a caret one display row above/below every caret (Shift+Alt+↑/↓ or
+    /// Ctrl+Shift+↑/↓).
     AddCaretVertical {
         /// Below if true, above if false.
         down: bool,
@@ -321,7 +322,7 @@ pub enum Action {
     Undo,
     /// Redo the last undone edit (Ctrl+Shift+Z / Ctrl+Y).
     Redo,
-    /// Grow/shrink the column (box) selection (Ctrl+Shift+Alt+Arrow).
+    /// Grow/shrink the column (box) selection (no default key).
     ColumnSelect(ColumnDir),
     /// Mouse box (column) selection drag (Shift+Alt+drag): corners as
     /// `(visible buffer row, virtual display cell)` — the core resolves the
@@ -337,7 +338,7 @@ pub enum Action {
         /// Down if true, up if false.
         down: bool,
     },
-    /// Duplicate the selected line-block above/below (Shift+Alt+↑/↓).
+    /// Duplicate the selected line-block above/below (Ctrl+Shift+Alt+↑/↓).
     CopyLine {
         /// Below if true, above if false.
         down: bool,
@@ -2607,8 +2608,8 @@ impl<Message> Widget<Message, iced::Theme, iced::Renderer> for Editor<'_, Messag
                 // other key falls through and re-enters as typing.
                 if self.popup.is_some() {
                     // Only PLAIN navigation keys belong to the popup — modified
-                    // chords (Ctrl+Enter insert-line, Ctrl+Alt add-caret, the
-                    // Ctrl+Shift+Alt column arms) pass through to their own arms
+                    // chords (Ctrl+Enter insert-line, Ctrl+Shift add-caret,
+                    // Ctrl+Shift+Alt copy-line) pass through to their own arms
                     // rather than being swallowed by the popup.
                     let plain = !modifiers.command() && !modifiers.alt();
                     let popup_action = match key {
@@ -3990,44 +3991,35 @@ fn numpad_text(physical: &iced::keyboard::key::Physical, text: Option<&str>) -> 
 fn interpret_key(key: &Key, text: Option<&str>, mods: Modifiers) -> Option<Action> {
     let extend = mods.shift();
     let mv = |motion| Some(Action::Move { motion, extend });
-    // Column (box) selection needs all three of Ctrl+Shift+Alt — checked before
-    // the Ctrl+Arrow word-motions below, which Ctrl+Shift+Alt+Left would else
-    // match on `control()` alone.
-    let column = mods.control() && mods.shift() && mods.alt();
+    // VS Code's Linux arrow chords: Ctrl+Shift+Alt+↑/↓ copy the line,
+    // Shift+Alt+↑/↓ and Ctrl+Shift+↑/↓ add a caret above/below, and column
+    // select has no key. The three-modifier arms come first.
     match key {
-        Key::Named(Named::ArrowUp) if column => Some(Action::ColumnSelect(ColumnDir::Up)),
-        Key::Named(Named::ArrowDown) if column => Some(Action::ColumnSelect(ColumnDir::Down)),
-        Key::Named(Named::ArrowLeft) if column => Some(Action::ColumnSelect(ColumnDir::Left)),
-        Key::Named(Named::ArrowRight) if column => Some(Action::ColumnSelect(ColumnDir::Right)),
-        // Ctrl+Alt+↑/↓ add a caret above/below every caret — after the
-        // three-modifier column arms, before the plain arrows.
-        Key::Named(Named::ArrowUp) if mods.control() && mods.alt() && !mods.shift() => {
+        Key::Named(Named::ArrowUp) if mods.control() && mods.shift() && mods.alt() => {
+            Some(Action::CopyLine { down: false })
+        }
+        Key::Named(Named::ArrowDown) if mods.control() && mods.shift() && mods.alt() => {
+            Some(Action::CopyLine { down: true })
+        }
+        Key::Named(Named::ArrowUp) if mods.shift() && (mods.alt() || mods.control()) => {
             Some(Action::AddCaretVertical { down: false })
         }
-        Key::Named(Named::ArrowDown) if mods.control() && mods.alt() && !mods.shift() => {
+        Key::Named(Named::ArrowDown) if mods.shift() && (mods.alt() || mods.control()) => {
             Some(Action::AddCaretVertical { down: true })
         }
-        // Shift+Alt+←/→ shrink/expand the selection structurally — the
-        // standard bindings; without Ctrl, which is column-select above.
+        // Shift+Alt+←/→ shrink/expand the selection structurally.
         Key::Named(Named::ArrowRight) if mods.alt() && !mods.control() && mods.shift() => {
             Some(Action::ExpandSelection)
         }
         Key::Named(Named::ArrowLeft) if mods.alt() && !mods.control() && mods.shift() => {
             Some(Action::ShrinkSelection)
         }
-        // Alt+↑/↓ move the line, Shift+Alt+↑/↓ copy it (both without Ctrl, which
-        // is column-select above). Checked before the plain arrow motions.
+        // Alt+↑/↓ move the line; checked before the plain arrow motions.
         Key::Named(Named::ArrowUp) if mods.alt() && !mods.control() && !mods.shift() => {
             Some(Action::MoveLine { down: false })
         }
         Key::Named(Named::ArrowDown) if mods.alt() && !mods.control() && !mods.shift() => {
             Some(Action::MoveLine { down: true })
-        }
-        Key::Named(Named::ArrowUp) if mods.alt() && !mods.control() && mods.shift() => {
-            Some(Action::CopyLine { down: false })
-        }
-        Key::Named(Named::ArrowDown) if mods.alt() && !mods.control() && mods.shift() => {
-            Some(Action::CopyLine { down: true })
         }
         Key::Named(Named::ArrowLeft) if mods.control() => mv(Motion::WordLeft),
         Key::Named(Named::ArrowRight) if mods.control() => mv(Motion::WordRight),
@@ -4754,45 +4746,22 @@ mod tests {
     }
 
     #[test]
-    fn ctrl_shift_alt_arrow_is_column_select() {
-        let csa = Modifiers::CTRL | Modifiers::SHIFT | Modifiers::ALT;
+    fn arrow_chords_follow_vscode_linux() {
+        let arrow = |named, mods| interpret_key(&Key::Named(named), None, mods);
+        let (shift, alt, ctrl) = (Modifiers::SHIFT, Modifiers::ALT, Modifiers::CTRL);
+        assert_eq!(arrow(Named::ArrowUp, shift | alt), Some(Action::AddCaretVertical { down: false }));
+        assert_eq!(arrow(Named::ArrowDown, shift | alt), Some(Action::AddCaretVertical { down: true }));
+        assert_eq!(arrow(Named::ArrowUp, ctrl | shift), Some(Action::AddCaretVertical { down: false }));
+        assert_eq!(arrow(Named::ArrowDown, ctrl | shift), Some(Action::AddCaretVertical { down: true }));
+        assert_eq!(arrow(Named::ArrowUp, ctrl | shift | alt), Some(Action::CopyLine { down: false }));
+        assert_eq!(arrow(Named::ArrowDown, ctrl | shift | alt), Some(Action::CopyLine { down: true }));
+        assert_eq!(arrow(Named::ArrowUp, alt), Some(Action::MoveLine { down: false }));
+        assert_eq!(arrow(Named::ArrowDown, alt), Some(Action::MoveLine { down: true }));
+        assert_eq!(arrow(Named::ArrowRight, shift | alt), Some(Action::ExpandSelection));
+        assert_eq!(arrow(Named::ArrowLeft, shift | alt), Some(Action::ShrinkSelection));
         assert_eq!(
-            interpret_key(&Key::Named(Named::ArrowDown), None, csa),
-            Some(Action::ColumnSelect(ColumnDir::Down))
-        );
-        assert_eq!(
-            interpret_key(&Key::Named(Named::ArrowRight), None, csa),
-            Some(Action::ColumnSelect(ColumnDir::Right))
-        );
-        // Without Alt it stays word-motion extend, not column select.
-        assert_eq!(
-            interpret_key(&Key::Named(Named::ArrowLeft), None, Modifiers::CTRL | Modifiers::SHIFT),
+            arrow(Named::ArrowLeft, ctrl | shift),
             Some(Action::Move { motion: Motion::WordLeft, extend: true })
-        );
-    }
-
-    #[test]
-    fn alt_arrow_moves_and_copies_lines() {
-        assert_eq!(
-            interpret_key(&Key::Named(Named::ArrowDown), None, Modifiers::ALT),
-            Some(Action::MoveLine { down: true })
-        );
-        assert_eq!(
-            interpret_key(&Key::Named(Named::ArrowUp), None, Modifiers::ALT),
-            Some(Action::MoveLine { down: false })
-        );
-        assert_eq!(
-            interpret_key(&Key::Named(Named::ArrowDown), None, Modifiers::ALT | Modifiers::SHIFT),
-            Some(Action::CopyLine { down: true })
-        );
-        // Ctrl+Shift+Alt+Down stays column-select, not copy-line.
-        assert_eq!(
-            interpret_key(
-                &Key::Named(Named::ArrowDown),
-                None,
-                Modifiers::CTRL | Modifiers::SHIFT | Modifiers::ALT
-            ),
-            Some(Action::ColumnSelect(ColumnDir::Down))
         );
     }
 

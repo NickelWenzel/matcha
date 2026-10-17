@@ -42,7 +42,7 @@ pub struct Document {
     history: History,
     pub(crate) selections: SelectionSet,
     /// The anchored rectangle while in column (box) selection mode. `Some`
-    /// only between consecutive Ctrl+Shift+Alt+Arrow presses; any other action
+    /// only between consecutive column-select steps; any other action
     /// clears it, leaving the box as an ordinary multi-cursor set.
     column: Option<ColumnSelection>,
     /// The incremental syntax-highlight cache, present once the app injects
@@ -630,7 +630,7 @@ impl Document {
         (0, self.buffer.len())
     }
 
-    /// Ctrl+Alt+↑/↓: add a caret one display row above/below EVERY
+    /// Shift+Alt+↑/↓: add a caret one display row above/below EVERY
     /// existing caret, keeping the current set — the stack-a-column gesture.
     /// Each landing resolves like a click at that caret's visual column (the
     /// `movement::caret_one_display_row` rule → `Rows::hit`), so tabs, chips,
@@ -885,8 +885,8 @@ impl Document {
         (start, end)
     }
 
-    /// Column (box) selection — Ctrl+Shift+Alt+Arrow. The first press anchors
-    /// at the primary caret; each press steps the *active* corner by `dir` and
+    /// Column (box) selection. The first step anchors at the primary caret;
+    /// each step moves the *active* corner by `dir` and
     /// rebuilds one selection per spanned row, from the anchor cell to the active
     /// cell. Stepping the active corner back toward the anchor shrinks the box.
     /// Display-space end to end: corners are display CELLS, so the box stays
@@ -1014,7 +1014,7 @@ impl Document {
     }
 
     /// Duplicate the selected line-block above (`down = false`) or below
-    /// (`down = true`) — Shift+Alt+↑/↓. The caret lands on the copy. Single
+    /// (`down = true`) — Ctrl+Shift+Alt+↑/↓. The caret lands on the copy. Single
     /// selection. Own undo step.
     pub fn copy_line(&mut self, down: bool) {
         let sel = *self.selections.newest();

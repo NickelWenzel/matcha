@@ -67,7 +67,7 @@ pub enum Granularity {
     Line,
 }
 
-/// A direction for column (box) selection — Ctrl+Shift+Alt+Arrow. Up/
+/// A direction for column (box) selection. Up/
 /// Down move the active row; Left/Right move the active (virtual) column.
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub enum ColumnDir {
