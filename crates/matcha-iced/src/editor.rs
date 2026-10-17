@@ -42,6 +42,7 @@ use matcha_core::intel::inlay;
 use matcha_core::row_layout::{self, Edge, Rows};
 
 use crate::geo::{Geo, ScrollAnchor, CHIP_PILL_RADIUS, TEXT_PAD};
+use crate::keymap::Keymap;
 use crate::popup;
 
 use crate::metrics::Metrics;
@@ -775,6 +776,7 @@ pub struct Editor<'a, Message> {
     wake: Option<Wake>,
     /// Whether spaces and tabs are drawn as faded `·` and `→` marks.
     show_whitespace: bool,
+    keymap: Option<&'a Keymap>,
     font: Font,
     size: f32,
     line_height: f32,
@@ -796,6 +798,7 @@ impl<'a, Message> Editor<'a, Message> {
             hover_pending: None,
             wake: None,
             show_whitespace: false,
+            keymap: None,
             font: crate::DEFAULT_FONT,
             size: DEFAULT_SIZE,
             line_height: default_line_height(DEFAULT_SIZE),
@@ -816,6 +819,13 @@ impl<'a, Message> Editor<'a, Message> {
     #[must_use]
     pub fn snippet_active(mut self, active: bool) -> Self {
         self.snippet_active = active;
+        self
+    }
+
+    /// Override the built-in key bindings (default: none).
+    #[must_use]
+    pub fn keymap(mut self, keymap: &'a Keymap) -> Self {
+        self.keymap = Some(keymap);
         self
     }
 
@@ -2650,6 +2660,20 @@ impl<Message> Widget<Message, iced::Theme, iced::Renderer> for Editor<'_, Messag
                         shell.capture_event();
                         return;
                     }
+                }
+                // Overrides yield to the modal keys above and beat every built-in chord below.
+                match self.keymap.and_then(|keymap| keymap.lookup(key, *modifiers)) {
+                    Some(Some(action)) => {
+                        if action.moves_caret() {
+                            state.autoscroll = true;
+                        }
+                        state.ping();
+                        shell.publish((self.on_action)(action.clone()));
+                        shell.capture_event();
+                        return;
+                    }
+                    Some(None) => return,
+                    None => {}
                 }
                 // Ctrl+C/X/V need the clipboard and the document, which
                 // `interpret_key` has no access to — handle them here first.

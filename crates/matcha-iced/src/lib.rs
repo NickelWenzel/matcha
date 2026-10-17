@@ -95,6 +95,7 @@ pub mod editor;
 mod geo;
 #[cfg(feature = "syntect")]
 mod highlight_pool;
+pub mod keymap;
 pub mod metrics;
 pub mod popup;
 
