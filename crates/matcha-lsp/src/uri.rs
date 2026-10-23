@@ -23,30 +23,12 @@ impl Key {
     /// Normalizing a key's URI again yields the same key.
     #[must_use]
     pub fn new(uri: &Uri) -> Self {
-        let raw = uri.0.as_str();
-        let Some((scheme, rest)) = raw.split_once(':') else {
-            return Key(uri.clone());
-        };
-        if !scheme.eq_ignore_ascii_case("file") {
-            return Key(uri.clone());
+        let mut key = uri.clone();
+        // Parsing already lower-cased the scheme and dropped a `localhost` host.
+        if uri.scheme() == "file" {
+            key.set_path(&normalize_path(uri.path()));
         }
-        let hier = without_query(rest);
-        let tail = &rest[hier.len()..];
-        let mut out = String::from("file:");
-        let path = match hier.strip_prefix("//") {
-            Some(after) => {
-                let (authority, path) = after.split_at(after.find('/').unwrap_or(after.len()));
-                out.push_str("//");
-                if !authority.eq_ignore_ascii_case("localhost") {
-                    out.push_str(authority);
-                }
-                path
-            }
-            None => hier,
-        };
-        out.push_str(&normalize_path(path));
-        out.push_str(tail);
-        Key(Uri(out))
+        Key(key)
     }
 
     /// The normalized URI, as sent to a server.
@@ -58,7 +40,7 @@ impl Key {
     /// The normalized URI text.
     #[must_use]
     pub fn as_str(&self) -> &str {
-        self.0 .0.as_str()
+        self.0.as_str()
     }
 
     /// The decoded file-system path of a `file:` key, `None` for other schemes. A drive letter
@@ -124,7 +106,7 @@ pub fn from_path(path: &std::path::Path) -> Option<Uri> {
             push_escape(&mut text, byte);
         }
     }
-    Some(Key::new(&Uri(text)).0)
+    Uri::parse(&text).ok().map(|uri| Key::new(&uri).0)
 }
 
 /// `text` up to its query or fragment.
@@ -254,11 +236,11 @@ mod tests {
         ("file:///tmp/%FF.rs", "file:///tmp/%FF.rs"),
         ("file:///tmp/%c3%a9.rs", "file:///tmp/%C3%A9.rs"),
         ("untitled:Untitled-1", "untitled:Untitled-1"),
-        ("https://Example.com/A%3a", "https://Example.com/A%3a"),
+        ("https://example.com/A%3a", "https://example.com/A%3a"),
     ];
 
     fn key(text: &str) -> Key {
-        Key::new(&Uri::from(text))
+        Key::new(&Uri::parse(text).expect("a valid URI"))
     }
 
     fn assert_normalizes(pairs: &[(&str, &str)]) {
@@ -351,13 +333,13 @@ mod tests {
     fn from_path_percent_encodes_and_is_already_normalized() {
         let uri = from_path(std::path::Path::new("/tmp/a dir/é.rs")).expect("an absolute path");
         assert_eq!(
-            uri.0,
+            uri.as_str(),
             "file:///tmp/a%20dir/%C3%A9.rs",
             "the path is encoded"
         );
         assert_eq!(
             Key::new(&uri).as_str(),
-            uri.0,
+            uri.as_str(),
             "normalizing changes nothing"
         );
     }
@@ -390,6 +372,10 @@ mod tests {
     #[cfg(not(target_family = "wasm"))]
     #[test]
     fn non_file_keys_have_no_path() {
-        assert_eq!(key("untitled:x").to_path(), None, "an untitled key has no path");
+        assert_eq!(
+            key("untitled:x").to_path(),
+            None,
+            "an untitled key has no path"
+        );
     }
 }

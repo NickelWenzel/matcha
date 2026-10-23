@@ -117,7 +117,8 @@ impl Edit {
             let mut entries = Vec::with_capacity(map.len());
             for (uri, edits) in map {
                 let edits = Vec::<gen_lsp_types::TextEdit>::deserialize(edits).map_err(decode)?;
-                entries.push((uri::Key::new(&Uri::from(uri.as_str())), edits));
+                let uri = Uri::parse(uri).map_err(|_| malformed("`changes` keys are URIs"))?;
+                entries.push((uri::Key::new(&uri), edits));
             }
             // The map has no order of its own.
             entries.sort_by(|(a, _), (b, _)| a.as_str().cmp(b.as_str()));

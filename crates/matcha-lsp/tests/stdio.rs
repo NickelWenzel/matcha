@@ -1391,7 +1391,7 @@ mod native {
             let mut stdout = io::stdout().lock();
             for name in ["fake.rs", super::UNOPENED] {
                 let uri = super::temp_uri(name);
-                write(&mut stdout, publish(&json!(uri.0), &Value::Null, "grandchild"));
+                write(&mut stdout, publish(&json!(uri), &Value::Null, "grandchild"));
             }
             log.line("published");
             thread::sleep(std::time::Duration::from_secs(1));

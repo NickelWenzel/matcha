@@ -22,7 +22,10 @@ categories = ["text-editors", "development-tools"]
 #                       what LSP positions convert against.
 #   gen-lsp-types     — the LSP payload types, generated from the protocol's
 #                       metamodel, re-exported as `matcha_lsp::gen_lsp_types`.
-#                       Pure data plus serde; wasm-safe.
+#                       Pure data plus serde; wasm-safe. With `url`, its `Uri`
+#                       is `url::Url`, which validates and parses every URI.
+#   url               — via gen-lsp-types' `url` feature: the parsed `Uri` that
+#                       `uri::Key` normalizes; brings idna and the ICU crates.
 #   lsp-server        — the memory bridge's `Connection`, re-exported as
 #                       `matcha_lsp::lsp_server` so host and client agree on one
 #                       version.
@@ -50,32 +53,54 @@ categories = ["text-editors", "development-tools"]
 #                       check.
 [dependencies]
 matcha-core.workspace = true
-gen-lsp-types = "0.11" # LSP payloads (re-exported; never wrapped)
-lsp-server = "0.10"  # the memory bridge's Connection (re-exported)
+gen-lsp-types = { version = "0.11", features = [
+    "url",
+] } # LSP payloads (re-exported; never wrapped)
+lsp-server = "0.10" # the memory bridge's Connection (re-exported)
 crossbeam-channel = "0.5"
 futures-core = "0.3"
 futures-channel = "0.3"
 serde = { version = "1", features = ["derive"] }
-serde_json = "1"     # envelope params/results as `Value`
-thiserror = "2"      # library error enums
+serde_json = "1" # envelope params/results as `Value`
+thiserror = "2" # library error enums
 
 [features]
 # The WebSocket bridge (`Builder::websocket`). Native: tungstenite, rustls (ring) with the
 # webpki roots, mio. Browser: the web-sys WebSocket. Opt-in: 24 crates new to an iced host.
 websocket = [
-    "dep:tungstenite", "dep:rustls", "dep:webpki-roots", "dep:mio",              # native
-    "dep:web-sys", "dep:wasm-bindgen", "dep:js-sys", "dep:wasm-bindgen-futures", # browser
+    "dep:tungstenite",
+    "dep:rustls",
+    "dep:webpki-roots",
+    "dep:mio",                  # native
+    "dep:web-sys",
+    "dep:wasm-bindgen",
+    "dep:js-sys",
+    "dep:wasm-bindgen-futures", # browser
 ]
 
 [target.'cfg(not(target_family = "wasm"))'.dependencies]
-tungstenite = { version = "0.30", default-features = false, features = ["handshake"], optional = true }
-rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"], optional = true }
+tungstenite = { version = "0.30", default-features = false, features = [
+    "handshake",
+], optional = true }
+rustls = { version = "0.23", default-features = false, features = [
+    "ring",
+    "std",
+    "tls12",
+], optional = true }
 webpki-roots = { version = "1", optional = true }
-mio = { version = "1", default-features = false, features = ["os-poll", "net"], optional = true }
+mio = { version = "1", default-features = false, features = [
+    "os-poll",
+    "net",
+], optional = true }
 
 [target.'cfg(all(target_arch = "wasm32", target_os = "unknown"))'.dependencies]
-wasmtimer = "0.4"    # default features, as iced's wasm tree already has them
-web-sys = { version = "0.3", features = ["WebSocket", "MessageEvent", "CloseEvent", "BinaryType"], optional = true }
+wasmtimer = "0.4" # default features, as iced's wasm tree already has them
+web-sys = { version = "0.3", features = [
+    "WebSocket",
+    "MessageEvent",
+    "CloseEvent",
+    "BinaryType",
+], optional = true }
 wasm-bindgen = { version = "0.2", optional = true }
 js-sys = { version = "0.3", optional = true }
 wasm-bindgen-futures = { version = "0.4", optional = true }
@@ -86,13 +111,21 @@ futures = { version = "0.3", default-features = false, features = ["std"] }
 
 [target.'cfg(not(target_family = "wasm"))'.dev-dependencies]
 # `block_on` for the tests that use threads.
-futures = { version = "0.3", default-features = false, features = ["std", "executor"] }
+futures = { version = "0.3", default-features = false, features = [
+    "std",
+    "executor",
+] }
 # The WebSocket test's fake server.
-tungstenite = { version = "0.30", default-features = false, features = ["handshake"] }
+tungstenite = { version = "0.30", default-features = false, features = [
+    "handshake",
+] }
 
 [target.'cfg(windows)'.dev-dependencies]
 # The console check reads `GetConsoleWindow`, which needs `unsafe` (allowed in the test crate).
-windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_System_Console"] }
+windows-sys = { version = "0.61", features = [
+    "Win32_Foundation",
+    "Win32_System_Console",
+] }
 
 # Self-re-executing fake servers need their own `main`.
 [[test]]

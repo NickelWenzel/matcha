@@ -400,7 +400,7 @@ mod tests {
     const B: &str = "file:///w/b.rs";
 
     fn uri(text: &str) -> Uri {
-        Uri::from(text)
+        Uri::parse(text).expect("a valid URI")
     }
 
     /// A client on the memory bridge, with the server end held by the test.

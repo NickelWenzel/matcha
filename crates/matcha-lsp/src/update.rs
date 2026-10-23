@@ -334,7 +334,7 @@ mod tests {
     use super::*;
 
     fn key(text: &str) -> uri::Key {
-        uri::Key::new(&gen_lsp_types::Uri::from(text))
+        uri::Key::new(&gen_lsp_types::Uri::parse(text).expect("a valid URI"))
     }
 
     fn edit(start: (u32, u32), end: (u32, u32), text: &str) -> TextEdit {

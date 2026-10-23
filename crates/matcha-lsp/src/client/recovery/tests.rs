@@ -134,7 +134,7 @@ fn nth(n: u64) -> Generation {
 }
 
 fn uri() -> gen_lsp_types::Uri {
-    gen_lsp_types::Uri::from("file:///a.rs")
+    gen_lsp_types::Uri::parse("file:///a.rs").expect("a valid URI")
 }
 
 fn document(text: &str) -> Document {

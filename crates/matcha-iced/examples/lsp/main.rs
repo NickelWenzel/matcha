@@ -355,7 +355,7 @@ fn toggle_chord(event: keyboard::Event) -> Option<Message> {
 }
 
 fn uri(text: &str) -> lsp::gen_lsp_types::Uri {
-    lsp::gen_lsp_types::Uri::from(text)
+    lsp::gen_lsp_types::Uri::parse(text).expect("a valid URI")
 }
 
 fn rust() -> SyntaxDef {

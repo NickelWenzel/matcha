@@ -68,7 +68,7 @@ fn capabilities() -> Value {
 }
 
 fn uri(text: &str) -> Uri {
-    Uri::from(text)
+    Uri::parse(text).expect("a valid URI")
 }
 
 fn document(text: &str) -> Document {

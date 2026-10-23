@@ -576,7 +576,7 @@ fn headline(update: &lsp::Update) -> Option<String> {
 }
 
 fn uri(text: &str) -> lsp::gen_lsp_types::Uri {
-    lsp::gen_lsp_types::Uri::from(text)
+    lsp::gen_lsp_types::Uri::parse(text).expect("a valid URI")
 }
 
 /// The tree-sitter Rust grammar.
