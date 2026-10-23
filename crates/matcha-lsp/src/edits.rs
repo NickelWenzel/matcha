@@ -25,7 +25,7 @@ pub(crate) enum Text<'a> {
 }
 
 impl Text<'_> {
-    fn span(&self, encoding: Encoding, range: lsp_types::Range) -> Range<u32> {
+    fn span(&self, encoding: Encoding, range: gen_lsp_types::Range) -> Range<u32> {
         match self {
             Text::Snapshot(snapshot) => encoding.span(snapshot, range),
             Text::Str(text) => {
@@ -57,7 +57,7 @@ impl Text<'_> {
 pub(crate) fn hygiene(
     text: Text<'_>,
     encoding: Encoding,
-    edits: &[lsp_types::TextEdit],
+    edits: &[gen_lsp_types::TextEdit],
 ) -> Vec<EditOp> {
     let mut ops: Vec<EditOp> = edits
         .iter()
@@ -256,13 +256,13 @@ fn hunks(rows: &[Vec<usize>], n: usize, m: usize) -> Vec<Hunk> {
 
 #[cfg(test)]
 mod tests {
-    use lsp_types::{Position, TextEdit};
+    use gen_lsp_types::{Position, TextEdit};
 
     use super::*;
 
     fn edit(start: (u32, u32), end: (u32, u32), text: &str) -> TextEdit {
         TextEdit::new(
-            lsp_types::Range::new(Position::new(start.0, start.1), Position::new(end.0, end.1)),
+            gen_lsp_types::Range::new(Position::new(start.0, start.1), Position::new(end.0, end.1)),
             text.to_owned(),
         )
     }

@@ -1,13 +1,11 @@
 //! URI identity: one normalized form per document, used to register, look up and send.
 //!
 //! Servers and hosts spell the same file differently (`file:///C%3A/x`, `file:///c:/x`,
-//! `file://localhost/x`), and lsp-types' `Uri` compares raw strings. Every URI is normalized once
-//! into a [`Key`] and compared only as a key.
+//! `file://localhost/x`), and gen-lsp-types' `Uri` compares raw strings. Every URI is normalized
+//! once into a [`Key`] and compared only as a key.
 
 use core::fmt;
-use std::str::FromStr;
-
-use lsp_types::Uri;
+use gen_lsp_types::Uri;
 
 /// A normalized URI, made by [`Key::new`]. Two spellings of one `file:` path produce equal keys.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
@@ -25,7 +23,7 @@ impl Key {
     /// Normalizing a key's URI again yields the same key.
     #[must_use]
     pub fn new(uri: &Uri) -> Self {
-        let raw = uri.as_str();
+        let raw = uri.0.as_str();
         let Some((scheme, rest)) = raw.split_once(':') else {
             return Key(uri.clone());
         };
@@ -48,9 +46,7 @@ impl Key {
         };
         out.push_str(&normalize_path(path));
         out.push_str(tail);
-        // The output holds only characters fluent-uri accepts in a path, so the fallback never
-        // runs; it keeps the function total without a panic.
-        Uri::from_str(&out).map_or_else(|_| Key(uri.clone()), Key)
+        Key(Uri(out))
     }
 
     /// The normalized URI, as sent to a server.
@@ -62,7 +58,7 @@ impl Key {
     /// The normalized URI text.
     #[must_use]
     pub fn as_str(&self) -> &str {
-        self.0.as_str()
+        self.0 .0.as_str()
     }
 
     /// The decoded file-system path of a `file:` key, `None` for other schemes. A drive letter
@@ -128,7 +124,7 @@ pub fn from_path(path: &std::path::Path) -> Option<Uri> {
             push_escape(&mut text, byte);
         }
     }
-    Uri::from_str(&text).ok().map(|uri| Key::new(&uri).0)
+    Some(Key::new(&Uri(text)).0)
 }
 
 /// `text` up to its query or fragment.
@@ -262,7 +258,7 @@ mod tests {
     ];
 
     fn key(text: &str) -> Key {
-        Key::new(&Uri::from_str(text).expect("fixture URI parses"))
+        Key::new(&Uri::from(text))
     }
 
     fn assert_normalizes(pairs: &[(&str, &str)]) {
@@ -335,14 +331,13 @@ mod tests {
         );
     }
 
-    /// Everything `Key::new` emits parses as a `Uri`, and normalizing it again changes nothing.
+    /// Normalizing a key's URI again changes nothing.
     #[test]
-    fn normalized_uris_round_trip_through_uri_from_str() {
+    fn normalizing_is_idempotent() {
         for &(input, _) in FIXTURES {
             let normalized = key(input);
-            let reparsed = Uri::from_str(normalized.as_str()).expect("normalized URI parses");
             assert_eq!(
-                Key::new(&reparsed),
+                Key::new(normalized.uri()),
                 normalized,
                 "{input} normalizes idempotently"
             );
@@ -356,13 +351,13 @@ mod tests {
     fn from_path_percent_encodes_and_is_already_normalized() {
         let uri = from_path(std::path::Path::new("/tmp/a dir/é.rs")).expect("an absolute path");
         assert_eq!(
-            uri.as_str(),
+            uri.0,
             "file:///tmp/a%20dir/%C3%A9.rs",
             "the path is encoded"
         );
         assert_eq!(
             Key::new(&uri).as_str(),
-            uri.as_str(),
+            uri.0,
             "normalizing changes nothing"
         );
     }

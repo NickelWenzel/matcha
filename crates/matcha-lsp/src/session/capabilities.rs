@@ -1,16 +1,16 @@
 //! What the client advertises, and the subset of the server's capabilities it acts on.
 
-use lsp_types::{
-    ClientCapabilities, CompletionClientCapabilities, CompletionItemCapability,
-    DocumentFormattingClientCapabilities, FailureHandlingKind, GeneralClientCapabilities,
-    GotoCapability, HoverClientCapabilities, HoverProviderCapability, InlayHintClientCapabilities,
-    InlayHintResolveClientCapabilities, InlayHintServerCapabilities,
-    InlayHintWorkspaceClientCapabilities, MarkupKind, OneOf,
-    ParameterInformationSettings, PublishDiagnosticsClientCapabilities, RenameClientCapabilities,
-    ServerCapabilities, SignatureHelpClientCapabilities, SignatureInformationSettings,
-    TextDocumentClientCapabilities, TextDocumentSyncCapability, TextDocumentSyncClientCapabilities,
-    TextDocumentSyncKind, TextDocumentSyncSaveOptions, WindowClientCapabilities,
-    WorkspaceClientCapabilities, WorkspaceEditClientCapabilities,
+use gen_lsp_types::{
+    ClientCapabilities, ClientCompletionItemOptions, ClientInlayHintResolveOptions,
+    ClientSignatureInformationOptions, ClientSignatureParameterInformationOptions,
+    CompletionClientCapabilities, DefinitionClientCapabilities, DefinitionProvider,
+    DocumentFormattingClientCapabilities, DocumentFormattingProvider, FailureHandlingKind,
+    GeneralClientCapabilities, HoverClientCapabilities, HoverProvider, InlayHintClientCapabilities,
+    InlayHintProvider, InlayHintWorkspaceClientCapabilities, MarkupKind,
+    PublishDiagnosticsClientCapabilities, RenameClientCapabilities, RenameProvider,
+    ServerCapabilities, SignatureHelpClientCapabilities, TextDocumentClientCapabilities,
+    TextDocumentSync, TextDocumentSyncClientCapabilities, TextDocumentSyncKind,
+    WindowClientCapabilities, WorkspaceClientCapabilities, WorkspaceEditClientCapabilities,
 };
 
 use crate::Encoding;
@@ -67,14 +67,14 @@ impl Server {
         let (open_close, change, save) = match &capabilities.text_document_sync {
             // LSP §textDocument_synchronization: a bare kind is the shorthand for
             // `{ openClose: true, change: kind }`, which asks for no saves.
-            Some(TextDocumentSyncCapability::Kind(kind)) => (true, *kind, Save::Never),
-            Some(TextDocumentSyncCapability::Options(options)) => (
+            Some(TextDocumentSync::Kind(kind)) => (true, *kind, Save::Never),
+            Some(TextDocumentSync::Options(options)) => (
                 options.open_close.unwrap_or(false),
-                options.change.unwrap_or(TextDocumentSyncKind::NONE),
+                options.change.unwrap_or(TextDocumentSyncKind::None),
                 match &options.save {
-                    None | Some(TextDocumentSyncSaveOptions::Supported(false)) => Save::Never,
-                    Some(TextDocumentSyncSaveOptions::Supported(true)) => Save::Notify,
-                    Some(TextDocumentSyncSaveOptions::SaveOptions(options)) => {
+                    None | Some(gen_lsp_types::Save::Bool(false)) => Save::Never,
+                    Some(gen_lsp_types::Save::Bool(true)) => Save::Notify,
+                    Some(gen_lsp_types::Save::SaveOptions(options)) => {
                         if options.include_text == Some(true) {
                             Save::WithText
                         } else {
@@ -83,7 +83,7 @@ impl Server {
                     }
                 },
             ),
-            None => (false, TextDocumentSyncKind::NONE, Save::Never),
+            None => (false, TextDocumentSyncKind::None, Save::Never),
         };
         let completion = capabilities
             .completion_provider
@@ -97,27 +97,30 @@ impl Server {
             signature: capabilities.signature_help_provider.is_some(),
             hover: matches!(
                 capabilities.hover_provider,
-                Some(HoverProviderCapability::Simple(true) | HoverProviderCapability::Options(_))
+                Some(HoverProvider::Bool(true) | HoverProvider::HoverOptions(_))
             ),
             definition: matches!(
                 capabilities.definition_provider,
-                Some(OneOf::Left(true) | OneOf::Right(_))
+                Some(DefinitionProvider::Bool(true) | DefinitionProvider::DefinitionOptions(_))
             ),
             rename: matches!(
                 capabilities.rename_provider,
-                Some(OneOf::Left(true) | OneOf::Right(_))
+                Some(RenameProvider::Bool(true) | RenameProvider::RenameOptions(_))
             ),
             formatting: matches!(
                 capabilities.document_formatting_provider,
-                Some(OneOf::Left(true) | OneOf::Right(_))
+                Some(
+                    DocumentFormattingProvider::Bool(true)
+                        | DocumentFormattingProvider::DocumentFormattingOptions(_)
+                )
             ),
             inlay: match &capabilities.inlay_hint_provider {
-                None | Some(OneOf::Left(false)) => None,
-                Some(OneOf::Left(true)) => Some(Resolve::Unsupported),
-                Some(OneOf::Right(InlayHintServerCapabilities::Options(options))) => {
+                None | Some(InlayHintProvider::Bool(false)) => None,
+                Some(InlayHintProvider::Bool(true)) => Some(Resolve::Unsupported),
+                Some(InlayHintProvider::InlayHintOptions(options)) => {
                     Some(resolve(options.resolve_provider))
                 }
-                Some(OneOf::Right(InlayHintServerCapabilities::RegistrationOptions(options))) => {
+                Some(InlayHintProvider::InlayHintRegistrationOptions(options)) => {
                     Some(resolve(options.inlay_hint_options.resolve_provider))
                 }
             },
@@ -161,24 +164,25 @@ pub(crate) fn client() -> ClientCapabilities {
                 ..PublishDiagnosticsClientCapabilities::default()
             }),
             completion: Some(CompletionClientCapabilities {
-                completion_item: Some(CompletionItemCapability {
+                completion_item: Some(ClientCompletionItemOptions {
                     snippet_support: Some(true),
                     // The popup renders documentation as plain text; markdown from a server that
                     // ignores this is lowered.
                     documentation_format: Some(vec![MarkupKind::PlainText]),
-                    ..CompletionItemCapability::default()
+                    ..ClientCompletionItemOptions::default()
                 }),
                 context_support: Some(true),
                 ..CompletionClientCapabilities::default()
             }),
             signature_help: Some(SignatureHelpClientCapabilities {
-                signature_information: Some(SignatureInformationSettings {
+                signature_information: Some(ClientSignatureInformationOptions {
                     // The box renders documentation as plain text.
                     documentation_format: Some(vec![MarkupKind::PlainText]),
-                    parameter_information: Some(ParameterInformationSettings {
+                    parameter_information: Some(ClientSignatureParameterInformationOptions {
                         label_offset_support: Some(true),
                     }),
                     active_parameter_support: Some(true),
+                    ..ClientSignatureInformationOptions::default()
                 }),
                 ..SignatureHelpClientCapabilities::default()
             }),
@@ -186,9 +190,9 @@ pub(crate) fn client() -> ClientCapabilities {
                 content_format: Some(vec![MarkupKind::Markdown, MarkupKind::PlainText]),
                 ..HoverClientCapabilities::default()
             }),
-            definition: Some(GotoCapability {
+            definition: Some(DefinitionClientCapabilities {
                 link_support: Some(true),
-                ..GotoCapability::default()
+                ..DefinitionClientCapabilities::default()
             }),
             // Without `prepareSupport`: the editor asks for the new name itself.
             rename: Some(RenameClientCapabilities::default()),
@@ -197,7 +201,7 @@ pub(crate) fn client() -> ClientCapabilities {
             // an insert needs no round trip and cannot meet a stale resolve.
             inlay_hint: Some(InlayHintClientCapabilities {
                 dynamic_registration: Some(false),
-                resolve_support: Some(InlayHintResolveClientCapabilities {
+                resolve_support: Some(ClientInlayHintResolveOptions {
                     properties: vec!["tooltip".to_owned(), "label.tooltip".to_owned()],
                 }),
             }),

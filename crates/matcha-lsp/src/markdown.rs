@@ -1,7 +1,7 @@
 //! Server markdown lowered to what matcha renders: plain text for completion and signature
 //! documentation, and the hover card's markdown subset.
 
-use lsp_types::{Documentation, MarkupContent, MarkupKind};
+use gen_lsp_types::{Documentation, MarkupContent, MarkupKind};
 use matcha_core::intel::hover::escape_markdown;
 
 /// One source line after block-level lowering.
@@ -52,15 +52,16 @@ pub(crate) fn code_lines(code: &str) -> String {
 /// Completion documentation as plain text. A bare string is plain text per the spec.
 pub(crate) fn documentation(documentation: &Documentation) -> String {
     match documentation {
-        Documentation::String(text)
-        | Documentation::MarkupContent(MarkupContent {
-            kind: MarkupKind::PlainText,
-            value: text,
-        }) => text.clone(),
-        Documentation::MarkupContent(MarkupContent {
-            kind: MarkupKind::Markdown,
-            value,
-        }) => to_plain(value),
+        Documentation::String(text) => text.clone(),
+        Documentation::MarkupContent(markup) => markup_to_plain(markup),
+    }
+}
+
+/// Markup as plain text. A kind other than markdown is shown as sent.
+pub(crate) fn markup_to_plain(markup: &MarkupContent) -> String {
+    match markup.kind {
+        MarkupKind::Markdown => to_plain(&markup.value),
+        _ => markup.value.clone(),
     }
 }
 

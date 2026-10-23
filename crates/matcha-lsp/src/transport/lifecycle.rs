@@ -137,14 +137,14 @@ pub(crate) fn is_shutdown_reply(body: &[u8]) -> bool {
 
 /// Sends `exit`, closes the server's input behind it, and waits for the server to go.
 fn leave(link: &transport::Link, grace: Duration, now: Instant) -> Step {
-    let notification = message::Notification::new::<lsp_types::notification::Exit>(());
+    let notification = message::Notification::new::<gen_lsp_types::ExitNotification>(());
     link.send(client::serialize(&message::Message::Notification(notification)));
     link.close();
     Step::Exit { until: now + grace }
 }
 
 fn shutdown() -> std::sync::Arc<[u8]> {
-    let request = message::Request::new::<lsp_types::request::Shutdown>(
+    let request = message::Request::new::<gen_lsp_types::ShutdownRequest>(
         message::Id::String(transport::SHUTDOWN_ID.to_owned()),
         (),
     );

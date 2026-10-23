@@ -1,5 +1,3 @@
-use std::str::FromStr;
-
 use futures::{FutureExt, StreamExt};
 use matcha_core::intel::ticket::Counter;
 use matcha_core::{Document, EditOp, HoverRequest};
@@ -70,7 +68,7 @@ fn capabilities() -> Value {
 }
 
 fn uri(text: &str) -> Uri {
-    Uri::from_str(text).expect("fixture URI parses")
+    Uri::from(text)
 }
 
 fn document(text: &str) -> Document {
@@ -421,9 +419,12 @@ fn a_reply_nothing_waits_for_is_traced_without_a_method() {
 /// A server-specific notification.
 enum Ping {}
 
-impl lsp_types::notification::Notification for Ping {
+impl gen_lsp_types::Notification for Ping {
     type Params = Value;
-    const METHOD: &'static str = "custom/ping";
+    const METHOD: gen_lsp_types::LspNotificationMethod<'static> =
+        gen_lsp_types::LspNotificationMethod::Custom("custom/ping");
+    const MESSAGE_DIRECTION: gen_lsp_types::MessageDirection =
+        gen_lsp_types::MessageDirection::ClientToServer;
 }
 
 /// `notify` reaches only a running server.

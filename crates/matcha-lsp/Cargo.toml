@@ -20,8 +20,9 @@ categories = ["text-editors", "development-tools"]
 # Dependency budget — each entry earns its place with a consumer:
 #   matcha-core       — the document model the client syncs; its `Snapshot` is
 #                       what LSP positions convert against.
-#   lsp-types         — the LSP payload types, re-exported as
-#                       `matcha_lsp::lsp_types`. Pure data plus serde; wasm-safe.
+#   gen-lsp-types     — the LSP payload types, generated from the protocol's
+#                       metamodel, re-exported as `matcha_lsp::gen_lsp_types`.
+#                       Pure data plus serde; wasm-safe.
 #   lsp-server        — the memory bridge's `Connection`, re-exported as
 #                       `matcha_lsp::lsp_server` so host and client agree on one
 #                       version.
@@ -49,7 +50,7 @@ categories = ["text-editors", "development-tools"]
 #                       check.
 [dependencies]
 matcha-core.workspace = true
-lsp-types = "0.97"   # LSP payloads (re-exported; never wrapped)
+gen-lsp-types = "0.11" # LSP payloads (re-exported; never wrapped)
 lsp-server = "0.10"  # the memory bridge's Connection (re-exported)
 crossbeam-channel = "0.5"
 futures-core = "0.3"

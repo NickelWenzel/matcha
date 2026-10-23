@@ -336,7 +336,7 @@ impl Pipe {
         match self {
             Pipe::Stdout => log::Entry::stdout(text),
             Pipe::Stderr => log::Entry::stderr(text),
-            Pipe::Socket => log::Entry::socket(lsp_types::MessageType::LOG, text),
+            Pipe::Socket => log::Entry::socket(gen_lsp_types::MessageType::Log, text),
         }
     }
 }

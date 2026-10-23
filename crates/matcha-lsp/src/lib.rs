@@ -24,7 +24,7 @@
 //! - when a lost server starts again → [`restart`]
 //! - URI identity and file paths → [`uri`]
 //!
-//! Payloads are [`lsp_types`], and the in-process bridge takes an [`lsp_server`] connection;
+//! Payloads are [`gen_lsp_types`], and the in-process bridge takes an [`lsp_server`] connection;
 //! both are re-exported so a host and this crate always agree on one version. So is `rustls`
 //! natively with the `websocket` feature, for `Builder::tls`.
 
@@ -54,7 +54,7 @@ mod workspace;
 pub use client::{Client, Error};
 pub(crate) use encoding::Encoding;
 pub use lsp_server;
-pub use lsp_types;
+pub use gen_lsp_types;
 #[cfg(all(feature = "websocket", not(target_family = "wasm")))]
 pub use rustls;
 pub use update::Update;

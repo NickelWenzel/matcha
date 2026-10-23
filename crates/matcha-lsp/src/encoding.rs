@@ -7,7 +7,7 @@
 
 use core::ops::Range;
 
-use lsp_types::{Position, PositionEncodingKind};
+use gen_lsp_types::{Position, PositionEncodingKind};
 use matcha_core::{Bias, Point, Snapshot};
 
 /// How LSP positions count characters on a line.
@@ -84,7 +84,7 @@ impl Encoding {
     /// The byte span of an LSP range in `snapshot`. Each end clamps as in
     /// [`offset`](Self::offset); an inverted range collapses to its end.
     #[must_use]
-    pub fn span(self, snapshot: &Snapshot, range: lsp_types::Range) -> Range<u32> {
+    pub fn span(self, snapshot: &Snapshot, range: gen_lsp_types::Range) -> Range<u32> {
         let start = self.offset(snapshot, range.start);
         let end = self.offset(snapshot, range.end);
         start.min(end)..end
@@ -93,8 +93,8 @@ impl Encoding {
     /// The LSP range of byte span `span` in `snapshot`. Each end clamps as in
     /// [`position`](Self::position).
     #[must_use]
-    pub fn range(self, snapshot: &Snapshot, span: Range<u32>) -> lsp_types::Range {
-        lsp_types::Range::new(
+    pub fn range(self, snapshot: &Snapshot, span: Range<u32>) -> gen_lsp_types::Range {
+        gen_lsp_types::Range::new(
             self.position(snapshot, span.start),
             self.position(snapshot, span.end),
         )
@@ -120,7 +120,7 @@ impl Encoding {
     /// The byte span of an LSP range in plain `text`. Each end clamps as in
     /// [`text_offset`](Self::text_offset); an inverted range collapses to its end.
     #[must_use]
-    pub fn text_span(self, text: &str, range: lsp_types::Range) -> Range<usize> {
+    pub fn text_span(self, text: &str, range: gen_lsp_types::Range) -> Range<usize> {
         let start = self.text_offset(text, range.start);
         let end = self.text_offset(text, range.end);
         start.min(end)..end
@@ -341,7 +341,7 @@ mod tests {
     fn inverted_range_collapses_to_its_end() {
         let snap = snapshot("abcd");
         assert_eq!(
-            Encoding::Utf16.span(&snap, lsp_types::Range::new(at(0, 3), at(0, 1))),
+            Encoding::Utf16.span(&snap, gen_lsp_types::Range::new(at(0, 3), at(0, 1))),
             1..1,
             "(0,3)..(0,1) collapses to 1..1",
         );
@@ -391,7 +391,7 @@ mod tests {
             "(1,1) counts from after the \\n"
         );
         assert_eq!(
-            Encoding::Utf16.text_span(text, lsp_types::Range::new(at(0, 0), at(1, 2))),
+            Encoding::Utf16.text_span(text, gen_lsp_types::Range::new(at(0, 0), at(1, 2))),
             0..6,
             "(0,0)..(1,2) spans the whole text",
         );

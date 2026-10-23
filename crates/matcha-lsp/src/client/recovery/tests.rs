@@ -1,7 +1,6 @@
 //! A stdio client against a scripted worker: the test plays the bridge, feeding transport
 //! events through `receive` and reading what the client tells the worker and writes.
 
-use std::str::FromStr;
 use std::time::Duration;
 
 use futures::{FutureExt, StreamExt};
@@ -134,8 +133,8 @@ fn nth(n: u64) -> Generation {
     (0..n).fold(Generation::FIRST, |generation, _| generation.next())
 }
 
-fn uri() -> lsp_types::Uri {
-    lsp_types::Uri::from_str("file:///a.rs").expect("fixture URI parses")
+fn uri() -> gen_lsp_types::Uri {
+    gen_lsp_types::Uri::from("file:///a.rs")
 }
 
 fn document(text: &str) -> Document {

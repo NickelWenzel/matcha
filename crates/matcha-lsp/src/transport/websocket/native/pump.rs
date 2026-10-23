@@ -185,7 +185,7 @@ impl Pump {
                 Ok(Message::Binary(bytes)) => match std::str::from_utf8(&bytes) {
                     Ok(_) => self.deliver(&bytes),
                     Err(error) => self.log(
-                        lsp_types::MessageType::WARNING,
+                        gen_lsp_types::MessageType::Warning,
                         format!(
                             "dropped a binary WebSocket frame that isn't UTF-8 ({} bytes): {error}",
                             bytes.len()
@@ -255,9 +255,9 @@ impl Pump {
         match frame {
             Some(CloseFrame { code, reason }) => {
                 let level = if code == CloseCode::Normal {
-                    lsp_types::MessageType::INFO
+                    gen_lsp_types::MessageType::Info
                 } else {
-                    lsp_types::MessageType::WARNING
+                    gen_lsp_types::MessageType::Warning
                 };
                 let code = u16::from(code);
                 self.log(
@@ -266,13 +266,13 @@ impl Pump {
                 );
             }
             None => self.log(
-                lsp_types::MessageType::WARNING,
+                gen_lsp_types::MessageType::Warning,
                 "WebSocket closed by the server without a code".to_owned(),
             ),
         }
     }
 
-    fn log(&self, level: lsp_types::MessageType, text: String) {
+    fn log(&self, level: gen_lsp_types::MessageType, text: String) {
         self.report(transport::Event::Log(Arc::from([log::Entry::socket(
             level, text,
         )])));

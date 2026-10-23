@@ -734,16 +734,16 @@ impl Task {
     /// more than the code: a refused connection is 1006.
     fn refused(&self, code: u16, reason: &str) -> io::Error {
         let text = format!("WebSocket closed before it opened: {code} {reason}");
-        self.log(lsp_types::MessageType::WARNING, text.clone());
+        self.log(gen_lsp_types::MessageType::Warning, text.clone());
         io::Error::new(io::ErrorKind::ConnectionRefused, text)
     }
 
     /// Logs the server's close of a live connection; 1000 is a normal close.
     fn log_close(&self, code: u16, reason: &str) {
         let level = if code == 1000 {
-            lsp_types::MessageType::INFO
+            gen_lsp_types::MessageType::Info
         } else {
-            lsp_types::MessageType::WARNING
+            gen_lsp_types::MessageType::Warning
         };
         self.log(
             level,
@@ -751,7 +751,7 @@ impl Task {
         );
     }
 
-    fn log(&self, level: lsp_types::MessageType, text: String) {
+    fn log(&self, level: gen_lsp_types::MessageType, text: String) {
         log(&self.events, level, text);
     }
 
@@ -880,7 +880,7 @@ fn body(data: &JsValue, events: &Feed) -> Option<Vec<u8>> {
         Err(error) => {
             log(
                 events,
-                lsp_types::MessageType::WARNING,
+                gen_lsp_types::MessageType::Warning,
                 format!(
                     "dropped a binary WebSocket frame that isn't UTF-8 ({} bytes): {error}",
                     bytes.len()
@@ -891,7 +891,7 @@ fn body(data: &JsValue, events: &Feed) -> Option<Vec<u8>> {
     }
 }
 
-fn log(events: &Feed, level: lsp_types::MessageType, text: String) {
+fn log(events: &Feed, level: gen_lsp_types::MessageType, text: String) {
     let _ = events.unbounded_send(transport::Event::Log(Arc::from([log::Entry::socket(
         level, text,
     )])));

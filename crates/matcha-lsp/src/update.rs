@@ -3,11 +3,11 @@
 
 use std::ops::Range;
 
+use gen_lsp_types::TextEdit;
 use matcha_core::intel::inlay;
 use matcha_core::{
     CompletionItem, Diagnostic, DocId, EditOp, HoverInfo, Revision, SignatureInfo, Ticket,
 };
-
 use serde_json::Value;
 
 use crate::{client, edits, log, message, trace, uri, Encoding};
@@ -140,12 +140,12 @@ pub struct Applied {
 #[derive(Clone, Debug)]
 pub struct FileEdits {
     uri: uri::Key,
-    edits: Vec<lsp_types::TextEdit>,
+    edits: Vec<TextEdit>,
     encoding: Encoding,
 }
 
 impl FileEdits {
-    pub(crate) fn new(uri: uri::Key, edits: Vec<lsp_types::TextEdit>, encoding: Encoding) -> Self {
+    pub(crate) fn new(uri: uri::Key, edits: Vec<TextEdit>, encoding: Encoding) -> Self {
         Self {
             uri,
             edits,
@@ -241,12 +241,12 @@ pub mod jump {
     #[derive(Clone, Debug, PartialEq, Eq)]
     pub struct Unopened {
         uri: uri::Key,
-        range: lsp_types::Range,
+        range: gen_lsp_types::Range,
         encoding: Encoding,
     }
 
     impl Unopened {
-        pub(crate) fn new(uri: uri::Key, range: lsp_types::Range, encoding: Encoding) -> Self {
+        pub(crate) fn new(uri: uri::Key, range: gen_lsp_types::Range, encoding: Encoding) -> Self {
             Self {
                 uri,
                 range,
@@ -329,19 +329,17 @@ impl Document {
 
 #[cfg(test)]
 mod tests {
-    use std::str::FromStr;
-
-    use lsp_types::Position;
+    use gen_lsp_types::Position;
 
     use super::*;
 
     fn key(text: &str) -> uri::Key {
-        uri::Key::new(&lsp_types::Uri::from_str(text).expect("fixture URI parses"))
+        uri::Key::new(&gen_lsp_types::Uri::from(text))
     }
 
-    fn edit(start: (u32, u32), end: (u32, u32), text: &str) -> lsp_types::TextEdit {
-        lsp_types::TextEdit::new(
-            lsp_types::Range::new(Position::new(start.0, start.1), Position::new(end.0, end.1)),
+    fn edit(start: (u32, u32), end: (u32, u32), text: &str) -> TextEdit {
+        TextEdit::new(
+            gen_lsp_types::Range::new(Position::new(start.0, start.1), Position::new(end.0, end.1)),
             text.to_owned(),
         )
     }
@@ -372,7 +370,7 @@ mod tests {
     /// The server's range converts against the text the host hands in, in the negotiated unit.
     #[test]
     fn unopened_span_converts_against_the_given_text() {
-        let range = lsp_types::Range::new(Position::new(1, 1), Position::new(1, 2));
+        let range = gen_lsp_types::Range::new(Position::new(1, 1), Position::new(1, 2));
         let unopened = jump::Unopened::new(key("file:///w/c.rs"), range, Encoding::Utf16);
         assert_eq!(unopened.span("é\nab"), 4..5, "line 1 starts after the two-byte é");
     }

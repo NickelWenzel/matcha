@@ -16,7 +16,10 @@ use std::sync::Arc;
 ))]
 use std::time::Duration;
 
-use lsp_types::{ClientInfo, InitializeParams, Uri, WorkspaceFolder};
+use gen_lsp_types::{
+    ClientInfo, InitializeParams, RootPath, Uri, WorkspaceFolder, WorkspaceFolders,
+    WorkspaceFoldersInitializeParams,
+};
 use serde_json::Value;
 
 #[cfg(any(
@@ -427,12 +430,15 @@ fn initialize_params(
     initialization_options: Option<Value>,
 ) -> InitializeParams {
     InitializeParams {
-        process_id,
+        process_id: process_id.and_then(|id| i32::try_from(id).ok()),
         root_uri: root.map(|root| root.uri().clone()),
-        root_path: root.and_then(uri::Key::file_path),
+        root_path: root.and_then(uri::Key::file_path).map(RootPath::String),
         initialization_options,
         capabilities: session::capabilities::client(),
-        workspace_folders: root.map(|root| vec![folder(root)]),
+        workspace_folders_initialize_params: WorkspaceFoldersInitializeParams {
+            workspace_folders: root
+                .map(|root| WorkspaceFolders::WorkspaceFolderList(vec![folder(root)])),
+        },
         client_info: Some(ClientInfo {
             name: "matcha-lsp".to_owned(),
             version: Some(env!("CARGO_PKG_VERSION").to_owned()),

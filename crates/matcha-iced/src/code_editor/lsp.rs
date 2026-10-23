@@ -9,7 +9,7 @@
 
 use iced::time::Duration;
 use matcha_core::DiagnosticsOutcome;
-use matcha_lsp::lsp_types::Uri;
+use matcha_lsp::gen_lsp_types::Uri;
 use matcha_lsp::update::{self, Change, Refusal, Stamp, Target};
 use matcha_lsp::{Client, Error};
 
@@ -388,7 +388,7 @@ mod tests {
     use matcha_core::CompletionState;
     use serde_json::{json, Value};
 
-    use matcha_lsp::lsp_types::Uri;
+    use matcha_lsp::gen_lsp_types::Uri;
     use matcha_lsp::update::{self, Refusal};
     use matcha_lsp::{client, lsp_server, Client, Error, Update};
 
@@ -400,7 +400,7 @@ mod tests {
     const B: &str = "file:///w/b.rs";
 
     fn uri(text: &str) -> Uri {
-        text.parse().expect("test URIs parse")
+        Uri::from(text)
     }
 
     /// A client on the memory bridge, with the server end held by the test.

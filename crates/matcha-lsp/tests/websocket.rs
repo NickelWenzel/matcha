@@ -530,7 +530,7 @@ fn a_binary_frame_that_is_not_utf8_is_logged_and_dropped() {
     assert_eq!(logs.len(), 1, "one log entry: {updates:#?}");
     assert_eq!(
         logs[0].level(),
-        matcha_lsp::lsp_types::MessageType::WARNING,
+        matcha_lsp::gen_lsp_types::MessageType::Warning,
         "a warning"
     );
     assert!(
@@ -568,7 +568,7 @@ fn a_close_frame_is_logged_before_the_status_change() {
     assert_eq!(logs.len(), 1, "one log entry: {updates:#?}");
     assert_eq!(
         logs[0].level(),
-        matcha_lsp::lsp_types::MessageType::WARNING,
+        matcha_lsp::gen_lsp_types::MessageType::Warning,
         "1001 is a warning"
     );
     assert!(
@@ -775,9 +775,12 @@ fn a_large_message_goes_out_while_the_server_reads_slowly() {
 #[test]
 fn a_server_that_stops_reading_trips_the_hung_server_guard() {
     enum Blob {}
-    impl matcha_lsp::lsp_types::notification::Notification for Blob {
+    impl matcha_lsp::gen_lsp_types::Notification for Blob {
         type Params = String;
-        const METHOD: &'static str = "matcha-test/blob";
+        const METHOD: matcha_lsp::gen_lsp_types::LspNotificationMethod<'static> =
+            matcha_lsp::gen_lsp_types::LspNotificationMethod::Custom("matcha-test/blob");
+        const MESSAGE_DIRECTION: matcha_lsp::gen_lsp_types::MessageDirection =
+            matcha_lsp::gen_lsp_types::MessageDirection::ClientToServer;
     }
     let (listener, url) = listener();
     let mut harness = Harness::new(

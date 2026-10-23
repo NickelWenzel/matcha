@@ -36,7 +36,7 @@ The modules a host uses:
 - `restart`: the restart `Policy`.
 - `uri`: `uri::from_path`, and `uri::Key` for comparing URIs the way the client does.
 
-`lsp_types` and `lsp_server` are re-exported, and so is `rustls` natively with `websocket`, so a
+`gen_lsp_types` and `lsp_server` are re-exported, and so is `rustls` natively with `websocket`, so a
 host and this crate agree on one version of each. The crate needs Rust 1.85 or newer
 (lsp-server is edition 2024).
 
