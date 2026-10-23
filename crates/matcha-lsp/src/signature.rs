@@ -2,7 +2,9 @@
 
 use core::ops::Range;
 
-use lsp_types::{ParameterInformation, ParameterLabel, SignatureHelp};
+use gen_lsp_types::{
+    ActiveParameter, ParameterInformation, ParameterInformationLabel, SignatureHelp,
+};
 use matcha_core::SignatureInfo;
 
 use crate::{markdown, Encoding};
@@ -20,7 +22,7 @@ pub(crate) struct Query {
 pub(crate) fn convert(help: SignatureHelp) -> Option<SignatureInfo> {
     let last = help.signatures.len().checked_sub(1)?;
     let index = (help.active_signature.unwrap_or(0) as usize).min(last);
-    let shared = help.active_parameter;
+    let shared = active_index(help.active_parameter);
     let signature = help.signatures.into_iter().nth(index)?;
     let params = parameters(
         &signature.label,
@@ -28,8 +30,7 @@ pub(crate) fn convert(help: SignatureHelp) -> Option<SignatureInfo> {
     );
     // The per-signature field (LSP 3.16) is precise; the top-level one is shared by every
     // signature and only a fallback.
-    let active = signature
-        .active_parameter
+    let active = active_index(signature.active_parameter)
         .or(shared)
         .unwrap_or(0)
         .min(params.len().saturating_sub(1) as u32);
@@ -44,6 +45,15 @@ pub(crate) fn convert(help: SignatureHelp) -> Option<SignatureInfo> {
     })
 }
 
+/// The index an `activeParameter` names. `null`, "no parameter is active", is read as absent: the
+/// signature box always highlights one parameter.
+fn active_index(active: Option<ActiveParameter>) -> Option<u32> {
+    match active {
+        Some(ActiveParameter::Int(index)) => Some(index),
+        Some(ActiveParameter::Null) | None => None,
+    }
+}
+
 /// Byte ranges of each parameter within `label`, one per parameter so the indices stay aligned
 /// with the active parameter. A label that is not found is an empty range where the search
 /// stood.
@@ -55,16 +65,16 @@ fn parameters(label: &str, parameters: &[ParameterInformation]) -> Vec<Range<u32
         .iter()
         .map(|parameter| {
             let range = match &parameter.label {
-                ParameterLabel::Simple(text) if !text.is_empty() => {
+                ParameterInformationLabel::String(text) if !text.is_empty() => {
                     match label[cursor..].find(text.as_str()) {
                         Some(at) => cursor + at..cursor + at + text.len(),
                         None => cursor..cursor,
                     }
                 }
-                ParameterLabel::Simple(_) => cursor..cursor,
+                ParameterInformationLabel::String(_) => cursor..cursor,
                 // Label offsets are UTF-16 code units whatever position encoding was negotiated
                 // (LSP §textDocument_signatureHelp, `ParameterInformation.label`).
-                ParameterLabel::LabelOffsets([start, end]) => {
+                ParameterInformationLabel::Tuple((start, end)) => {
                     let end = Encoding::Utf16.bytes([label], *end) as usize;
                     let start = (Encoding::Utf16.bytes([label], *start) as usize).min(end);
                     start..end

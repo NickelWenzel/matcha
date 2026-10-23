@@ -1,5 +1,3 @@
-use std::str::FromStr;
-
 use matcha_core::intel::completion::Start;
 use matcha_core::intel::inlay;
 use matcha_core::intel::ticket::Counter;
@@ -18,7 +16,7 @@ fn incremental() -> Value {
 }
 
 fn uri(text: &str) -> Uri {
-    Uri::from_str(text).expect("fixture URI parses")
+    Uri::from(text)
 }
 
 fn document(text: &str) -> Document {
@@ -1170,7 +1168,7 @@ fn log_and_show_messages_become_log_entries() {
             panic!("expected one log entry, got {:?}", output.updates)
         };
         assert_eq!(entry.is_shown(), shown, "{method} shown");
-        assert_eq!(entry.level(), lsp_types::MessageType::INFO, "{method} level");
+        assert_eq!(entry.level(), gen_lsp_types::MessageType::Info, "{method} level");
         assert_eq!(entry.text(), "hi", "{method} text");
         assert_eq!(entry.source(), log::Source::Server, "{method} source");
         assert!(output.messages.is_empty(), "{method} sends nothing");
@@ -3831,8 +3829,7 @@ fn one_malformed_inlay_hint_does_not_lose_the_set() {
             {"position": {"line": 0, "character": 5}, "label": ": i32", "kind": 1},
             {"position": "nowhere", "label": "x"},
             {"position": {"line": 0, "character": 10}, "label": [
-                {"value": "T",
-                    "location": {"uri": "file:///bad path.rs", "range": span_on(0, 0, 1)}},
+                {"value": "T", "location": {"uri": "file:///w/a.rs"}},
             ]},
             {"label": "no position"},
             7,

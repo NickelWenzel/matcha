@@ -9,17 +9,16 @@ use core::ops::Range;
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use lsp_types::error_codes::{CONTENT_MODIFIED, REQUEST_CANCELLED, SERVER_CANCELLED};
-use lsp_types::{
-    ApplyWorkspaceEditResponse, CompletionContext, CompletionParams,
-    CompletionTriggerKind, ConfigurationParams, DidChangeConfigurationParams,
+use gen_lsp_types::{
+    ApplyWorkspaceEditResult, CompletionContext, CompletionParams, CompletionTriggerKind,
+    ConfigurationParams, DefinitionParams, DidChangeConfigurationParams,
     DidChangeTextDocumentParams, DidCloseTextDocumentParams, DidOpenTextDocumentParams,
-    DidSaveTextDocumentParams,
-    DocumentFormattingParams, FormattingOptions, GotoDefinitionParams, HoverParams,
-    InitializeParams, InitializeResult, InitializedParams, InlayHintParams,
-    PublishDiagnosticsParams, RenameParams, SignatureHelpParams, TextDocumentContentChangeEvent,
-    TextDocumentIdentifier, TextDocumentItem, TextDocumentPositionParams, TextDocumentSyncKind,
-    Uri, VersionedTextDocumentIdentifier,
+    DidSaveTextDocumentParams, DocumentFormattingParams, FormattingOptions, HoverParams,
+    InitializeParams, InitializeResult, InitializedParams, InlayHintParams, LanguageKind,
+    LspErrorCodes, PublishDiagnosticsParams, RenameParams, SignatureHelpParams,
+    TextDocumentContentChangeEvent, TextDocumentContentChangePartial,
+    TextDocumentContentChangeWholeDocument, TextDocumentIdentifier, TextDocumentItem,
+    TextDocumentPositionParams, TextDocumentSyncKind, Uri, VersionedTextDocumentIdentifier,
 };
 use matcha_core::{
     document, intel, Bias, CompletionRequest, CompletionTrigger, DefinitionRequest, DocId,
@@ -54,7 +53,7 @@ pub(crate) struct Session {
     /// count and a late publish for the old incarnation never matches the new one.
     versions: HashMap<uri::Key, i32>,
     /// The latest unversioned diagnostics for URIs that are not open, applied at `open`.
-    cached: HashMap<uri::Key, Vec<lsp_types::Diagnostic>>,
+    cached: HashMap<uri::Key, Vec<gen_lsp_types::Diagnostic>>,
     /// Requests in flight, at most one per document and [`Kind`].
     pending: Vec<Pending>,
     next_request: i64,
@@ -159,7 +158,7 @@ enum Query {
     /// `textDocument/hover` at a label part's location, in any document, for a hint tooltip.
     LocationHover {
         uri: Uri,
-        position: lsp_types::Position,
+        position: gen_lsp_types::Position,
     },
 }
 
@@ -168,7 +167,7 @@ impl Session {
     /// request counts up from `2`.
     pub(crate) fn new(initialize: InitializeParams, configuration: Option<Value>) -> (Self, Message) {
         let request = message::Id::Number(1);
-        let message = message::Request::new::<lsp_types::request::Initialize>(
+        let message = message::Request::new::<gen_lsp_types::InitializeRequest>(
             request.clone(),
             initialize.clone(),
         );
@@ -200,10 +199,10 @@ impl Session {
     /// The method of the request `id` answers: `initialize`, or a request in flight. `None` for
     /// anything else, such as a cancelled or superseded request.
     pub(crate) fn method(&self, id: &message::Id) -> Option<&'static str> {
-        use lsp_types::request::Request;
+        use gen_lsp_types::Request;
         if let State::Initializing { request } = &self.state {
             if request == id {
-                return Some(lsp_types::request::Initialize::METHOD);
+                return Some(gen_lsp_types::InitializeRequest::METHOD.as_str());
             }
         }
         self.pending
@@ -280,7 +279,7 @@ impl Session {
             output
                 .messages
                 .push(Message::Notification(message::Notification::new::<
-                    lsp_types::notification::DidCloseTextDocument,
+                    gen_lsp_types::DidCloseTextDocumentNotification,
                 >(
                     DidCloseTextDocumentParams {
                         text_document: TextDocumentIdentifier {
@@ -330,14 +329,14 @@ impl Session {
             CompletionTrigger::TriggerChar(_) => {
                 match matched_trigger(snapshot, word.end, triggers) {
                     Some(trigger) => CompletionContext {
-                        trigger_kind: CompletionTriggerKind::TRIGGER_CHARACTER,
+                        trigger_kind: CompletionTriggerKind::TriggerCharacter,
                         trigger_character: Some(trigger),
                     },
                     None => return decline(),
                 }
             }
             CompletionTrigger::Typed(_) | CompletionTrigger::Manual => CompletionContext {
-                trigger_kind: CompletionTriggerKind::INVOKED,
+                trigger_kind: CompletionTriggerKind::Invoked,
                 trigger_character: None,
             },
         };
@@ -663,12 +662,12 @@ impl Session {
         };
         let content_changes = if !server.open_close || tracked.version.is_none() {
             None
-        } else if server.change == TextDocumentSyncKind::INCREMENTAL {
+        } else if server.change == TextDocumentSyncKind::Incremental {
             Some(
                 incremental(*encoding, &tracked.synced, snapshot, &changes)
                     .unwrap_or_else(|| full(snapshot)),
             )
-        } else if server.change == TextDocumentSyncKind::FULL {
+        } else if server.change == TextDocumentSyncKind::Full {
             Some(full(snapshot))
         } else {
             None
@@ -681,11 +680,13 @@ impl Session {
         tracked.version = Some(version);
         Output {
             messages: vec![Message::Notification(message::Notification::new::<
-                lsp_types::notification::DidChangeTextDocument,
+                gen_lsp_types::DidChangeTextDocumentNotification,
             >(
                 DidChangeTextDocumentParams {
                     text_document: VersionedTextDocumentIdentifier {
-                        uri: tracked.key.uri().clone(),
+                        text_document_identifier: TextDocumentIdentifier {
+                            uri: tracked.key.uri().clone(),
+                        },
                         version,
                     },
                     content_changes,
@@ -720,7 +721,7 @@ impl Session {
         };
         Output {
             messages: vec![Message::Notification(message::Notification::new::<
-                lsp_types::notification::DidSaveTextDocument,
+                gen_lsp_types::DidSaveTextDocumentNotification,
             >(DidSaveTextDocumentParams {
                 text_document: TextDocumentIdentifier {
                     uri: tracked.key.uri().clone(),
@@ -779,7 +780,7 @@ impl Session {
         };
         Output {
             messages: vec![Message::Request(message::Request::new::<
-                lsp_types::request::Initialize,
+                gen_lsp_types::InitializeRequest,
             >(request, self.initialize.clone()))],
             updates: Vec::new(),
         }
@@ -821,21 +822,21 @@ impl Session {
     /// the last one sent. A missing version is read as the last one sent, since servers that
     /// ignore `versionSupport` would otherwise never land a diagnostic.
     fn notified(&mut self, notification: message::Notification) -> Result<Output, Error> {
-        use lsp_types::notification::Notification;
+        use gen_lsp_types::Notification;
         let method = notification.method.as_str();
-        if method == lsp_types::notification::LogMessage::METHOD {
-            let params: lsp_types::LogMessageParams = decode(method, notification.params)?;
+        if method == gen_lsp_types::LogMessageNotification::METHOD.as_str() {
+            let params: gen_lsp_types::LogMessageParams = decode(method, notification.params)?;
             return Ok(Output::update(Update::Log(log::Entry::logged(params))));
         }
-        if method == lsp_types::notification::ShowMessage::METHOD {
-            let params: lsp_types::ShowMessageParams = decode(method, notification.params)?;
+        if method == gen_lsp_types::ShowMessageNotification::METHOD.as_str() {
+            let params: gen_lsp_types::ShowMessageParams = decode(method, notification.params)?;
             return Ok(Output::update(Update::Log(log::Entry::shown(params))));
         }
         // Server requests are answered as they arrive, so there is nothing to cancel.
-        if method == lsp_types::notification::Cancel::METHOD {
+        if method == gen_lsp_types::CancelNotification::METHOD.as_str() {
             return Ok(Output::default());
         }
-        if method != lsp_types::notification::PublishDiagnostics::METHOD {
+        if method != gen_lsp_types::PublishDiagnosticsNotification::METHOD.as_str() {
             return Ok(Output::update(Update::Notification(
                 update::Notification::new(notification),
             )));
@@ -899,12 +900,19 @@ impl Session {
             return Ok(Output::default());
         }
         match result {
-            Err(error) if error.code == REQUEST_CANCELLED || error.code == SERVER_CANCELLED => {
+            Err(error)
+                if matches!(
+                    lsp_error(error.code),
+                    Some(LspErrorCodes::RequestCancelled | LspErrorCodes::ServerCancelled)
+                ) =>
+            {
                 Ok(Output::default())
             }
             // The drop above guarantees the ticket is still current, so the server's text has
             // caught up with the editor's and asking again can succeed.
-            Err(error) if error.code == CONTENT_MODIFIED => Ok(self.reissue(entry)),
+            Err(error) if lsp_error(error.code) == Some(LspErrorCodes::ContentModified) => {
+                Ok(self.reissue(entry))
+            }
             Err(error) if entry.query.kind().is_command() => Err(Error::Server {
                 doc_id: Some(entry.doc_id),
                 method: entry.query.method().to_owned(),
@@ -1016,7 +1024,7 @@ impl Session {
         output
             .messages
             .push(Message::Notification(message::Notification::new::<
-                lsp_types::notification::Initialized,
+                gen_lsp_types::InitializedNotification,
             >(InitializedParams {})));
         output.messages.extend(self.configuration_push());
         if self.opens_and_closes() {
@@ -1036,7 +1044,7 @@ impl Session {
     fn configuration_push(&self) -> Option<Message> {
         let settings = self.configuration.as_ref()?;
         Some(Message::Notification(message::Notification::new::<
-            lsp_types::notification::DidChangeConfiguration,
+            gen_lsp_types::DidChangeConfigurationNotification,
         >(DidChangeConfigurationParams {
             settings: settings.clone(),
         })))
@@ -1070,11 +1078,11 @@ impl Session {
         let version = next_version(versions, &tracked.key);
         tracked.version = Some(version);
         Message::Notification(message::Notification::new::<
-            lsp_types::notification::DidOpenTextDocument,
+            gen_lsp_types::DidOpenTextDocumentNotification,
         >(DidOpenTextDocumentParams {
             text_document: TextDocumentItem {
                 uri: tracked.key.uri().clone(),
-                language_id: tracked.language.clone(),
+                language_id: LanguageKind::from(tracked.language.clone()),
                 version,
                 text: tracked.synced.text().into_owned(),
             },
@@ -1204,7 +1212,7 @@ impl Session {
     /// request was out, the answer may describe the old caret's parameter, so the request is also
     /// sent again at the new caret; once typing stops the carets agree and this ends.
     fn signed(&mut self, entry: &Pending, query: &signature::Query, value: Value) -> Output {
-        let Ok(help) = serde_json::from_value::<Option<lsp_types::SignatureHelp>>(value) else {
+        let Ok(help) = serde_json::from_value::<Option<gen_lsp_types::SignatureHelp>>(value) else {
             return entry.empty();
         };
         let mut output = Output::answer(
@@ -1228,7 +1236,7 @@ impl Session {
 
     /// Answers the ticket with the reply's card.
     fn hovered(&self, entry: &Pending, query: &hover::Query, value: Value) -> Output {
-        let Ok(reply) = serde_json::from_value::<Option<lsp_types::Hover>>(value) else {
+        let Ok(reply) = serde_json::from_value::<Option<gen_lsp_types::Hover>>(value) else {
             return entry.empty();
         };
         let card = reply
@@ -1285,7 +1293,7 @@ impl Session {
         part: u32,
         value: Value,
     ) -> Output {
-        let Ok(resolved) = serde_json::from_value::<lsp_types::InlayHint>(value) else {
+        let Ok(resolved) = serde_json::from_value::<gen_lsp_types::InlayHint>(value) else {
             return entry.empty();
         };
         let revision = entry.latest_ticket.revision();
@@ -1327,7 +1335,7 @@ impl Session {
         &mut self,
         doc_id: DocId,
         ticket: Ticket,
-        location: Option<lsp_types::Location>,
+        location: Option<gen_lsp_types::Location>,
         reissued_for: Option<Ticket>,
     ) -> Output {
         let none = || Output::answer(doc_id, ticket, update::Change::InlayTooltip(None));
@@ -1366,7 +1374,7 @@ impl Session {
 
     /// Answers the ticket with the hover at a label part's location, as tooltip markdown.
     fn location_hovered(&self, entry: &Pending, value: Value) -> Output {
-        let Ok(reply) = serde_json::from_value::<Option<lsp_types::Hover>>(value) else {
+        let Ok(reply) = serde_json::from_value::<Option<gen_lsp_types::Hover>>(value) else {
             return entry.empty();
         };
         let markdown = reply
@@ -1412,7 +1420,7 @@ impl Session {
         snapshot: &Snapshot,
         revisions: &[(uri::Key, Revision)],
         key: uri::Key,
-        range: lsp_types::Range,
+        range: gen_lsp_types::Range,
     ) -> Option<update::Target> {
         let requester = self.tracked.iter().find(|t| t.doc_id == requester)?;
         if key == requester.key {
@@ -1497,7 +1505,7 @@ impl Session {
     /// # Errors
     /// [`Error::Decode`] when the result is not a `TextEdit[]` or `null`.
     fn formatted(&self, entry: &Pending, value: Value) -> Result<Output, Error> {
-        let text_edits: Option<Vec<lsp_types::TextEdit>> =
+        let text_edits: Option<Vec<gen_lsp_types::TextEdit>> =
             decode(entry.query.method(), Some(value))?;
         let ops = edits::hygiene(
             edits::Text::Snapshot(&entry.request_snapshot),
@@ -1515,8 +1523,8 @@ impl Session {
     }
 
     fn answer(&self, request: message::Request) -> Output {
-        use lsp_types::request::Request;
-        let refresh = request.method == lsp_types::request::InlayHintRefreshRequest::METHOD;
+        use gen_lsp_types::Request;
+        let refresh = request.method == gen_lsp_types::InlayHintRefreshRequest::METHOD.as_str();
         let (response, updates) = match self.state {
             // A disconnected session promises nothing; `null` keeps the server unblocked.
             State::Disconnected => (message::Response::ok(request.id, ()), Vec::new()),
@@ -1551,7 +1559,7 @@ impl Session {
     }
 
     fn respond(&self, request: message::Request) -> message::Response {
-        use lsp_types::request::Request;
+        use gen_lsp_types::Request;
         let message::Request { id, method, params } = request;
         match method.as_str() {
             "workspace/configuration" => {
@@ -1575,7 +1583,13 @@ impl Session {
                 }
             }
             "workspace/workspaceFolders" => {
-                message::Response::ok(id, self.initialize.workspace_folders.clone())
+                message::Response::ok(
+                    id,
+                    self.initialize
+                        .workspace_folders_initialize_params
+                        .workspace_folders
+                        .clone(),
+                )
             }
             "client/registerCapability"
             | "client/unregisterCapability"
@@ -1583,7 +1597,7 @@ impl Session {
             | "window/showMessageRequest" => message::Response::ok(id, ()),
             "workspace/applyEdit" => message::Response::ok(
                 id,
-                ApplyWorkspaceEditResponse {
+                ApplyWorkspaceEditResult {
                     applied: false,
                     failure_reason: Some(
                         "matcha-lsp does not apply server-initiated edits".to_owned(),
@@ -1592,7 +1606,7 @@ impl Session {
                 },
             ),
             // `answer` also tells each open document to refetch.
-            method if method == lsp_types::request::InlayHintRefreshRequest::METHOD => {
+            method if method == gen_lsp_types::InlayHintRefreshRequest::METHOD.as_str() => {
                 message::Response::ok(id, ())
             }
             // `workspace/semanticTokens/refresh`, …: nothing is cached that a refresh would
@@ -1722,17 +1736,17 @@ impl Query {
 
     /// The request's LSP method.
     fn method(&self) -> &'static str {
-        use lsp_types::request::Request;
+        use gen_lsp_types::Request;
         match self {
-            Query::Completion(_) => lsp_types::request::Completion::METHOD,
-            Query::Signature(_) => lsp_types::request::SignatureHelpRequest::METHOD,
-            Query::Hover(_) => lsp_types::request::HoverRequest::METHOD,
-            Query::Definition { .. } => lsp_types::request::GotoDefinition::METHOD,
-            Query::Rename { .. } => lsp_types::request::Rename::METHOD,
-            Query::Format { .. } => lsp_types::request::Formatting::METHOD,
-            Query::Inlays { .. } => lsp_types::request::InlayHintRequest::METHOD,
-            Query::Resolve { .. } => lsp_types::request::InlayHintResolveRequest::METHOD,
-            Query::LocationHover { .. } => lsp_types::request::HoverRequest::METHOD,
+            Query::Completion(_) => gen_lsp_types::CompletionRequest::METHOD.as_str(),
+            Query::Signature(_) => gen_lsp_types::SignatureHelpRequest::METHOD.as_str(),
+            Query::Hover(_) => gen_lsp_types::HoverRequest::METHOD.as_str(),
+            Query::Definition { .. } => gen_lsp_types::DefinitionRequest::METHOD.as_str(),
+            Query::Rename { .. } => gen_lsp_types::RenameRequest::METHOD.as_str(),
+            Query::Format { .. } => gen_lsp_types::DocumentFormattingRequest::METHOD.as_str(),
+            Query::Inlays { .. } => gen_lsp_types::InlayHintRequest::METHOD.as_str(),
+            Query::Resolve { .. } => gen_lsp_types::InlayHintResolveRequest::METHOD.as_str(),
+            Query::LocationHover { .. } => gen_lsp_types::HoverRequest::METHOD.as_str(),
         }
     }
 
@@ -1759,12 +1773,12 @@ impl Query {
         encoding: Encoding,
         snapshot: &Snapshot,
     ) -> message::Request {
-        use lsp_types::request::Request;
+        use gen_lsp_types::Request;
         match self {
-            Query::Completion(query) => message::Request::new::<lsp_types::request::Completion>(
+            Query::Completion(query) => message::Request::new::<gen_lsp_types::CompletionRequest>(
                 id,
                 CompletionParams {
-                    text_document_position: TextDocumentPositionParams {
+                    text_document_position_params: TextDocumentPositionParams {
                         text_document: TextDocumentIdentifier { uri: uri.clone() },
                         position: encoding.position(snapshot, query.word.end),
                     },
@@ -1774,7 +1788,7 @@ impl Query {
                 },
             ),
             Query::Signature(query) => {
-                message::Request::new::<lsp_types::request::SignatureHelpRequest>(
+                message::Request::new::<gen_lsp_types::SignatureHelpRequest>(
                     id,
                     SignatureHelpParams {
                         context: None,
@@ -1786,7 +1800,7 @@ impl Query {
                     },
                 )
             }
-            Query::Hover(query) => message::Request::new::<lsp_types::request::HoverRequest>(
+            Query::Hover(query) => message::Request::new::<gen_lsp_types::HoverRequest>(
                 id,
                 HoverParams {
                     text_document_position_params: TextDocumentPositionParams {
@@ -1797,9 +1811,9 @@ impl Query {
                 },
             ),
             Query::Definition { offset } => {
-                message::Request::new::<lsp_types::request::GotoDefinition>(
+                message::Request::new::<gen_lsp_types::DefinitionRequest>(
                     id,
-                    GotoDefinitionParams {
+                    DefinitionParams {
                         text_document_position_params: TextDocumentPositionParams {
                             text_document: TextDocumentIdentifier { uri: uri.clone() },
                             position: encoding.position(snapshot, *offset),
@@ -1810,10 +1824,10 @@ impl Query {
                 )
             }
             Query::Rename { offset, new_name } => {
-                message::Request::new::<lsp_types::request::Rename>(
+                message::Request::new::<gen_lsp_types::RenameRequest>(
                     id,
                     RenameParams {
-                        text_document_position: TextDocumentPositionParams {
+                        text_document_position_params: TextDocumentPositionParams {
                             text_document: TextDocumentIdentifier { uri: uri.clone() },
                             position: encoding.position(snapshot, *offset),
                         },
@@ -1822,20 +1836,22 @@ impl Query {
                     },
                 )
             }
-            Query::Format { tab_size } => message::Request::new::<lsp_types::request::Formatting>(
-                id,
-                DocumentFormattingParams {
-                    text_document: TextDocumentIdentifier { uri: uri.clone() },
-                    // matcha indents with spaces, so the formatter must too.
-                    options: FormattingOptions {
-                        tab_size: *tab_size,
-                        insert_spaces: true,
-                        ..FormattingOptions::default()
+            Query::Format { tab_size } => {
+                message::Request::new::<gen_lsp_types::DocumentFormattingRequest>(
+                    id,
+                    DocumentFormattingParams {
+                        text_document: TextDocumentIdentifier { uri: uri.clone() },
+                        // matcha indents with spaces, so the formatter must too.
+                        options: FormattingOptions {
+                            tab_size: *tab_size,
+                            insert_spaces: true,
+                            ..FormattingOptions::default()
+                        },
+                        work_done_progress_params: Default::default(),
                     },
-                    work_done_progress_params: Default::default(),
-                },
-            ),
-            Query::Inlays { span } => message::Request::new::<lsp_types::request::InlayHintRequest>(
+                )
+            }
+            Query::Inlays { span } => message::Request::new::<gen_lsp_types::InlayHintRequest>(
                 id,
                 InlayHintParams {
                     work_done_progress_params: Default::default(),
@@ -1845,7 +1861,7 @@ impl Query {
             ),
             Query::Resolve { hint, .. } => message::Request {
                 id,
-                method: lsp_types::request::InlayHintResolveRequest::METHOD.to_owned(),
+                method: gen_lsp_types::InlayHintResolveRequest::METHOD.as_str().to_owned(),
                 params: Some(hint.clone()),
             },
             // The location is the server's own, in its own document and encoding, so it goes
@@ -1853,7 +1869,7 @@ impl Query {
             Query::LocationHover {
                 uri: target,
                 position,
-            } => message::Request::new::<lsp_types::request::HoverRequest>(
+            } => message::Request::new::<gen_lsp_types::HoverRequest>(
                 id,
                 HoverParams {
                     text_document_position_params: TextDocumentPositionParams {
@@ -1872,13 +1888,13 @@ impl Query {
 /// The context for asking again for a list the server marked incomplete.
 fn for_incomplete() -> CompletionContext {
     CompletionContext {
-        trigger_kind: CompletionTriggerKind::TRIGGER_FOR_INCOMPLETE_COMPLETIONS,
+        trigger_kind: CompletionTriggerKind::TriggerForIncompleteCompletions,
         trigger_character: None,
     }
 }
 
-/// `$/cancelRequest` for `id`, built by hand because lsp-types' `CancelParams` holds an `i32` id,
-/// narrower than [`message::Id`].
+/// `$/cancelRequest` for `id`, built by hand because gen-lsp-types' `CancelParams` holds an `i32`
+/// id, narrower than [`message::Id`].
 fn cancel(id: message::Id) -> Message {
     Message::Notification(message::Notification {
         method: "$/cancelRequest".to_owned(),
@@ -1917,8 +1933,6 @@ fn matched_trigger(snapshot: &Snapshot, caret: u32, triggers: &[String]) -> Opti
 }
 
 /// The next version for `key`, advancing its high-water mark.
-// `Key` hashes and compares by its URI text, which fluent-uri's internal `Cell` never changes.
-#[allow(clippy::mutable_key_type)]
 fn next_version(versions: &mut HashMap<uri::Key, i32>, key: &uri::Key) -> i32 {
     let version = versions.entry(key.clone()).or_insert(0);
     *version += 1;
@@ -1927,11 +1941,11 @@ fn next_version(versions: &mut HashMap<uri::Key, i32>, key: &uri::Key) -> i32 {
 
 /// The whole document as one content change.
 fn full(snapshot: &Snapshot) -> Vec<TextDocumentContentChangeEvent> {
-    vec![TextDocumentContentChangeEvent {
-        range: None,
-        range_length: None,
-        text: snapshot.text().into_owned(),
-    }]
+    vec![TextDocumentContentChangeEvent::TextDocumentContentChangeWholeDocument(
+        TextDocumentContentChangeWholeDocument {
+            text: snapshot.text().into_owned(),
+        },
+    )]
 }
 
 /// The logged edits as ranged content changes, or `None` when `changes` does not lead exactly
@@ -1960,15 +1974,24 @@ fn incremental(
             change
                 .ops()
                 .iter()
-                .map(|op| TextDocumentContentChangeEvent {
-                    range: Some(encoding.range(before, op.range.clone())),
-                    range_length: None,
-                    text: op.text.clone(),
+                .map(|op| {
+                    TextDocumentContentChangeEvent::TextDocumentContentChangePartial(
+                        TextDocumentContentChangePartial {
+                            range: encoding.range(before, op.range.clone()),
+                            text: op.text.clone(),
+                            ..TextDocumentContentChangePartial::default()
+                        },
+                    )
                 }),
         );
         cursor = Revision(cursor.0 + 1);
     }
     (cursor == snapshot.revision()).then_some(events)
+}
+
+/// The LSP error an error reply's code names, if it fits one.
+fn lsp_error(code: i64) -> Option<LspErrorCodes> {
+    i32::try_from(code).ok().map(LspErrorCodes::from)
 }
 
 /// Decodes a payload, naming the method on failure. Absent params decode from `null`.

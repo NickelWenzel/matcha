@@ -18,27 +18,27 @@ pub enum Source {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Entry {
     source: Source,
-    level: lsp_types::MessageType,
+    level: gen_lsp_types::MessageType,
     shown: bool,
     text: String,
 }
 
 impl Entry {
     /// A `window/logMessage`.
-    pub(crate) fn logged(params: lsp_types::LogMessageParams) -> Self {
+    pub(crate) fn logged(params: gen_lsp_types::LogMessageParams) -> Self {
         Self {
             source: Source::Server,
-            level: params.typ,
+            level: params.kind,
             shown: false,
             text: params.message,
         }
     }
 
     /// A `window/showMessage`.
-    pub(crate) fn shown(params: lsp_types::ShowMessageParams) -> Self {
+    pub(crate) fn shown(params: gen_lsp_types::ShowMessageParams) -> Self {
         Self {
             source: Source::Server,
-            level: params.typ,
+            level: params.kind,
             shown: true,
             text: params.message,
         }
@@ -62,7 +62,7 @@ impl Entry {
         not(target_family = "wasm"),
         all(feature = "websocket", target_arch = "wasm32", target_os = "unknown")
     ))]
-    pub(crate) fn socket(level: lsp_types::MessageType, text: String) -> Self {
+    pub(crate) fn socket(level: gen_lsp_types::MessageType, text: String) -> Self {
         Self {
             source: Source::Socket,
             level,
@@ -75,7 +75,7 @@ impl Entry {
     fn output(source: Source, text: String) -> Self {
         Self {
             source,
-            level: lsp_types::MessageType::LOG,
+            level: gen_lsp_types::MessageType::Log,
             shown: false,
             text,
         }
@@ -89,7 +89,7 @@ impl Entry {
 
     /// How severe it is: error, warning, info or log.
     #[must_use]
-    pub fn level(&self) -> lsp_types::MessageType {
+    pub fn level(&self) -> gen_lsp_types::MessageType {
         self.level
     }
 

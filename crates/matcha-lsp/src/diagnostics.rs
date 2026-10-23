@@ -1,15 +1,15 @@
 //! Server diagnostics converted to matcha's.
 
-use lsp_types::{DiagnosticSeverity, NumberOrString};
+use gen_lsp_types::{Code, DiagnosticSeverity, Message};
 use matcha_core::{Diagnostic, Severity, Snapshot};
 
-use crate::Encoding;
+use crate::{markdown, Encoding};
 
 /// Converts a published set against the snapshot the server saw.
 pub(crate) fn convert(
     encoding: Encoding,
     snapshot: &Snapshot,
-    diagnostics: &[lsp_types::Diagnostic],
+    diagnostics: &[gen_lsp_types::Diagnostic],
 ) -> Vec<Diagnostic> {
     diagnostics
         .iter()
@@ -17,11 +17,14 @@ pub(crate) fn convert(
             let mut out = Diagnostic::new(
                 encoding.span(snapshot, diagnostic.range),
                 severity(diagnostic.severity),
-                diagnostic.message.clone(),
+                match &diagnostic.message {
+                    Message::String(text) => text.clone(),
+                    Message::MarkupContent(markup) => markdown::markup_to_plain(markup),
+                },
             );
             out.code = diagnostic.code.as_ref().map(|code| match code {
-                NumberOrString::Number(n) => n.to_string(),
-                NumberOrString::String(s) => s.clone(),
+                Code::Int(n) => n.to_string(),
+                Code::String(s) => s.clone(),
             });
             out
         })
@@ -32,9 +35,9 @@ pub(crate) fn convert(
 /// error is the safe side: hiding a real error as a hint is worse than the reverse.
 fn severity(severity: Option<DiagnosticSeverity>) -> Severity {
     match severity {
-        Some(DiagnosticSeverity::WARNING) => Severity::Warning,
-        Some(DiagnosticSeverity::INFORMATION) => Severity::Info,
-        Some(DiagnosticSeverity::HINT) => Severity::Hint,
+        Some(DiagnosticSeverity::Warning) => Severity::Warning,
+        Some(DiagnosticSeverity::Information) => Severity::Info,
+        Some(DiagnosticSeverity::Hint) => Severity::Hint,
         _ => Severity::Error,
     }
 }
@@ -54,7 +57,7 @@ mod tests {
         if let (Some(diagnostic), Some(fields)) = (diagnostic.as_object_mut(), fields.as_object()) {
             diagnostic.extend(fields.clone());
         }
-        let diagnostic: lsp_types::Diagnostic =
+        let diagnostic: gen_lsp_types::Diagnostic =
             serde_json::from_value(diagnostic).expect("fixture diagnostic decodes");
         let snapshot = Document::new("ab").expect("fixture loads").snapshot();
         let [out] = convert(Encoding::Utf16, &snapshot, &[diagnostic])

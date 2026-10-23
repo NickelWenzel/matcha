@@ -2,7 +2,9 @@
 
 use core::ops::Range;
 
-use lsp_types::{HoverContents, LanguageString, MarkedString, MarkupContent, MarkupKind};
+// `MarkedString` is deprecated in favour of `MarkupContent`, but servers still send it.
+#[allow(deprecated)]
+use gen_lsp_types::{Contents, MarkedString, MarkedStringWithLanguage, MarkupKind};
 use matcha_core::intel::hover::escape_markdown;
 use matcha_core::{HoverInfo, Snapshot};
 
@@ -23,7 +25,7 @@ pub(crate) fn convert(
     encoding: Encoding,
     snapshot: &Snapshot,
     query: &Query,
-    hover: lsp_types::Hover,
+    hover: gen_lsp_types::Hover,
 ) -> Option<HoverInfo> {
     let markdown = contents(hover.contents);
     if markdown.trim().is_empty() {
@@ -40,30 +42,29 @@ pub(crate) fn convert(
 }
 
 /// Hover contents in the hover card's subset.
-pub(crate) fn contents(contents: HoverContents) -> String {
+pub(crate) fn contents(contents: Contents) -> String {
     match contents {
-        HoverContents::Scalar(marked) => marked_string(marked),
-        HoverContents::Array(list) => list
+        Contents::MarkedString(marked) => marked_string(marked),
+        Contents::MarkedStringList(list) => list
             .into_iter()
             .map(marked_string)
             .filter(|part| !part.trim().is_empty())
             .collect::<Vec<_>>()
             .join("\n\n"),
-        HoverContents::Markup(MarkupContent {
-            kind: MarkupKind::Markdown,
-            value,
-        }) => markdown::to_hover(&value),
-        HoverContents::Markup(MarkupContent {
-            kind: MarkupKind::PlainText,
-            value,
-        }) => escape_markdown(&value),
+        Contents::MarkupContent(markup) => match markup.kind {
+            MarkupKind::Markdown => markdown::to_hover(&markup.value),
+            _ => escape_markdown(&markup.value),
+        },
     }
 }
 
+#[allow(deprecated)]
 fn marked_string(marked: MarkedString) -> String {
     match marked {
         MarkedString::String(text) => markdown::to_hover(&text),
-        MarkedString::LanguageString(LanguageString { value, .. }) => markdown::code_lines(&value),
+        MarkedString::MarkedStringWithLanguage(MarkedStringWithLanguage { value, .. }) => {
+            markdown::code_lines(&value)
+        }
     }
 }
 

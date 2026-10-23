@@ -5,8 +5,8 @@ use core::ops::Range;
 use std::borrow::Cow;
 use std::collections::HashMap;
 
-use lsp_types::{
-    CompletionContext, CompletionItemKind, CompletionTextEdit, CompletionTriggerKind,
+use gen_lsp_types::{
+    CompletionContext, CompletionItemKind, CompletionItemTextEdit, CompletionTriggerKind,
     Documentation, InsertTextFormat,
 };
 use matcha_core::intel::completion::Start;
@@ -83,7 +83,7 @@ impl Query {
             self.context.clone()
         } else {
             CompletionContext {
-                trigger_kind: CompletionTriggerKind::INVOKED,
+                trigger_kind: CompletionTriggerKind::Invoked,
                 trigger_character: None,
             }
         }
@@ -221,11 +221,11 @@ impl<'a> Conversion<'a> {
         }
     }
 
-    fn candidate(&mut self, item: lsp_types::CompletionItem) -> Candidate {
-        let snippet = item.insert_text_format == Some(InsertTextFormat::SNIPPET);
+    fn candidate(&mut self, item: gen_lsp_types::CompletionItem) -> Candidate {
+        let snippet = item.insert_text_format == Some(InsertTextFormat::Snippet);
         let (text, edit) = match item.text_edit {
-            Some(CompletionTextEdit::Edit(edit)) => (edit.new_text, self.span(edit.range)),
-            Some(CompletionTextEdit::InsertAndReplace(edit)) => {
+            Some(CompletionItemTextEdit::TextEdit(edit)) => (edit.new_text, self.span(edit.range)),
+            Some(CompletionItemTextEdit::InsertReplaceEdit(edit)) => {
                 (edit.new_text, self.span(edit.insert))
             }
             None => (item.insert_text.unwrap_or_else(|| item.label.clone()), None),
@@ -269,7 +269,7 @@ impl<'a> Conversion<'a> {
 
     /// The byte span of an edit range that lies on the request line and contains the caret;
     /// `None` sends the item back to the request word.
-    fn span(&mut self, range: lsp_types::Range) -> Option<Range<u32>> {
+    fn span(&mut self, range: gen_lsp_types::Range) -> Option<Range<u32>> {
         if range.start.line != self.row || range.end.line != self.row {
             return None;
         }
@@ -300,7 +300,7 @@ pub(crate) fn convert(
     reply
         .items
         .into_iter()
-        .filter_map(|value| serde_json::from_value::<lsp_types::CompletionItem>(value).ok())
+        .filter_map(|value| serde_json::from_value::<gen_lsp_types::CompletionItem>(value).ok())
         .map(|item| conversion.candidate(item))
         .collect()
 }
@@ -324,25 +324,25 @@ fn shift(range: Range<u32>, caret: u32, delta: u32) -> Range<u32> {
 /// LSP's 25 kinds folded onto matcha's popup categories. matcha's `Param` has no LSP source.
 fn kind(kind: Option<CompletionItemKind>) -> CompletionKind {
     match kind {
-        Some(CompletionItemKind::KEYWORD) => CompletionKind::Keyword,
-        Some(CompletionItemKind::SNIPPET) => CompletionKind::Construct,
-        Some(CompletionItemKind::METHOD) => CompletionKind::Method,
-        Some(CompletionItemKind::FIELD | CompletionItemKind::PROPERTY) => CompletionKind::Field,
+        Some(CompletionItemKind::Keyword) => CompletionKind::Keyword,
+        Some(CompletionItemKind::Snippet) => CompletionKind::Construct,
+        Some(CompletionItemKind::Method) => CompletionKind::Method,
+        Some(CompletionItemKind::Field | CompletionItemKind::Property) => CompletionKind::Field,
         Some(
-            CompletionItemKind::CLASS
-            | CompletionItemKind::INTERFACE
-            | CompletionItemKind::STRUCT
-            | CompletionItemKind::ENUM
-            | CompletionItemKind::TYPE_PARAMETER,
+            CompletionItemKind::Class
+            | CompletionItemKind::Interface
+            | CompletionItemKind::Struct
+            | CompletionItemKind::Enum
+            | CompletionItemKind::TypeParameter,
         ) => CompletionKind::Type,
         Some(
-            CompletionItemKind::VALUE
-            | CompletionItemKind::ENUM_MEMBER
-            | CompletionItemKind::CONSTANT
-            | CompletionItemKind::COLOR
-            | CompletionItemKind::UNIT,
+            CompletionItemKind::Value
+            | CompletionItemKind::EnumMember
+            | CompletionItemKind::Constant
+            | CompletionItemKind::Color
+            | CompletionItemKind::Unit,
         ) => CompletionKind::Value,
-        Some(CompletionItemKind::EVENT) => CompletionKind::Event,
+        Some(CompletionItemKind::Event) => CompletionKind::Event,
         _ => CompletionKind::Symbol,
     }
 }
@@ -545,29 +545,29 @@ mod tests {
     #[test]
     fn item_kinds_map_to_matcha_kinds() {
         for (lsp, matcha) in [
-            (Some(CompletionItemKind::KEYWORD), CompletionKind::Keyword),
-            (Some(CompletionItemKind::SNIPPET), CompletionKind::Construct),
-            (Some(CompletionItemKind::METHOD), CompletionKind::Method),
-            (Some(CompletionItemKind::FIELD), CompletionKind::Field),
-            (Some(CompletionItemKind::PROPERTY), CompletionKind::Field),
-            (Some(CompletionItemKind::CLASS), CompletionKind::Type),
-            (Some(CompletionItemKind::INTERFACE), CompletionKind::Type),
-            (Some(CompletionItemKind::STRUCT), CompletionKind::Type),
-            (Some(CompletionItemKind::ENUM), CompletionKind::Type),
+            (Some(CompletionItemKind::Keyword), CompletionKind::Keyword),
+            (Some(CompletionItemKind::Snippet), CompletionKind::Construct),
+            (Some(CompletionItemKind::Method), CompletionKind::Method),
+            (Some(CompletionItemKind::Field), CompletionKind::Field),
+            (Some(CompletionItemKind::Property), CompletionKind::Field),
+            (Some(CompletionItemKind::Class), CompletionKind::Type),
+            (Some(CompletionItemKind::Interface), CompletionKind::Type),
+            (Some(CompletionItemKind::Struct), CompletionKind::Type),
+            (Some(CompletionItemKind::Enum), CompletionKind::Type),
             (
-                Some(CompletionItemKind::TYPE_PARAMETER),
+                Some(CompletionItemKind::TypeParameter),
                 CompletionKind::Type,
             ),
-            (Some(CompletionItemKind::VALUE), CompletionKind::Value),
-            (Some(CompletionItemKind::ENUM_MEMBER), CompletionKind::Value),
-            (Some(CompletionItemKind::CONSTANT), CompletionKind::Value),
-            (Some(CompletionItemKind::COLOR), CompletionKind::Value),
-            (Some(CompletionItemKind::UNIT), CompletionKind::Value),
-            (Some(CompletionItemKind::EVENT), CompletionKind::Event),
-            (Some(CompletionItemKind::FUNCTION), CompletionKind::Symbol),
-            (Some(CompletionItemKind::VARIABLE), CompletionKind::Symbol),
-            (Some(CompletionItemKind::MODULE), CompletionKind::Symbol),
-            (Some(CompletionItemKind::TEXT), CompletionKind::Symbol),
+            (Some(CompletionItemKind::Value), CompletionKind::Value),
+            (Some(CompletionItemKind::EnumMember), CompletionKind::Value),
+            (Some(CompletionItemKind::Constant), CompletionKind::Value),
+            (Some(CompletionItemKind::Color), CompletionKind::Value),
+            (Some(CompletionItemKind::Unit), CompletionKind::Value),
+            (Some(CompletionItemKind::Event), CompletionKind::Event),
+            (Some(CompletionItemKind::Function), CompletionKind::Symbol),
+            (Some(CompletionItemKind::Variable), CompletionKind::Symbol),
+            (Some(CompletionItemKind::Module), CompletionKind::Symbol),
+            (Some(CompletionItemKind::Text), CompletionKind::Symbol),
             (None, CompletionKind::Symbol),
         ] {
             assert_eq!(kind(lsp), matcha, "{lsp:?}");

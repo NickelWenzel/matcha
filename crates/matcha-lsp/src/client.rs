@@ -19,7 +19,7 @@ use std::net::SocketAddr;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 
-use lsp_types::Uri;
+use gen_lsp_types::Uri;
 use matcha_core::{
     document, intel, CompletionRequest, DefinitionRequest, DocId, FormatRequest, HoverRequest,
     RenameRequest, SignatureRequest, Snapshot,
@@ -39,19 +39,20 @@ static NEXT_CLIENT: AtomicU64 = AtomicU64::new(1);
 
 /// The notifications the client sends itself, which `notify` must not duplicate.
 const OWNED: [&str; 8] = {
-    use lsp_types::notification::{
-        Cancel, DidChangeConfiguration, DidChangeTextDocument, DidCloseTextDocument,
-        DidOpenTextDocument, DidSaveTextDocument, Exit, Initialized, Notification,
+    use gen_lsp_types::{
+        CancelNotification, DidChangeConfigurationNotification, DidChangeTextDocumentNotification,
+        DidCloseTextDocumentNotification, DidOpenTextDocumentNotification,
+        DidSaveTextDocumentNotification, ExitNotification, InitializedNotification, Notification,
     };
     [
-        DidOpenTextDocument::METHOD,
-        DidChangeTextDocument::METHOD,
-        DidCloseTextDocument::METHOD,
-        DidSaveTextDocument::METHOD,
-        Initialized::METHOD,
-        Exit::METHOD,
-        Cancel::METHOD,
-        DidChangeConfiguration::METHOD,
+        DidOpenTextDocumentNotification::METHOD.as_str(),
+        DidChangeTextDocumentNotification::METHOD.as_str(),
+        DidCloseTextDocumentNotification::METHOD.as_str(),
+        DidSaveTextDocumentNotification::METHOD.as_str(),
+        InitializedNotification::METHOD.as_str(),
+        ExitNotification::METHOD.as_str(),
+        CancelNotification::METHOD.as_str(),
+        DidChangeConfigurationNotification::METHOD.as_str(),
     ]
 };
 
@@ -392,11 +393,11 @@ impl Client {
     /// Dropped unless the server is running. Document sync, `initialized`, `exit`,
     /// `$/cancelRequest` and `workspace/didChangeConfiguration` belong to the client (use
     /// [`configure`](Self::configure) for the last).
-    pub fn notify<N: lsp_types::notification::Notification>(&mut self, params: N::Params) {
+    pub fn notify<N: gen_lsp_types::Notification>(&mut self, params: N::Params) {
         debug_assert!(
-            !OWNED.contains(&N::METHOD),
+            !OWNED.contains(&N::METHOD.as_str()),
             "`{}` belongs to the client",
-            N::METHOD
+            N::METHOD.as_str()
         );
         if self.session.running() {
             let notification = message::Notification::new::<N>(params);
@@ -764,12 +765,12 @@ impl Client {
     /// since a server treats anything before `initialize` as a protocol error.
     fn goodbye(&self) -> Vec<message::Message> {
         let exit = message::Message::Notification(message::Notification::new::<
-            lsp_types::notification::Exit,
+            gen_lsp_types::ExitNotification,
         >(()));
         if self.session.initializing() {
             return vec![exit];
         }
-        let shutdown = message::Request::new::<lsp_types::request::Shutdown>(
+        let shutdown = message::Request::new::<gen_lsp_types::ShutdownRequest>(
             message::Id::String(transport::SHUTDOWN_ID.to_owned()),
             (),
         );

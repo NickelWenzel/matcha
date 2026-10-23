@@ -274,8 +274,8 @@ impl App {
     /// `fallback` naming why the demo server stands in for another.
     fn demo_on(
         text: &str,
-        root: lsp::lsp_types::Uri,
-        file: &lsp::lsp_types::Uri,
+        root: lsp::gen_lsp_types::Uri,
+        file: &lsp::gen_lsp_types::Uri,
         fallback: Option<String>,
         now: Instant,
     ) -> (Self, lsp::client::Events) {
@@ -575,8 +575,8 @@ fn headline(update: &lsp::Update) -> Option<String> {
     }
 }
 
-fn uri(text: &str) -> lsp::lsp_types::Uri {
-    text.parse().expect("the demo's URIs parse")
+fn uri(text: &str) -> lsp::gen_lsp_types::Uri {
+    lsp::gen_lsp_types::Uri::from(text)
 }
 
 /// The tree-sitter Rust grammar.
@@ -631,9 +631,9 @@ mod native {
 
     /// The file to edit and the crate it belongs to.
     pub struct Workspace {
-        root_uri: lsp::lsp_types::Uri,
+        root_uri: lsp::gen_lsp_types::Uri,
         pub file: PathBuf,
-        file_uri: lsp::lsp_types::Uri,
+        file_uri: lsp::gen_lsp_types::Uri,
         text: String,
     }
 

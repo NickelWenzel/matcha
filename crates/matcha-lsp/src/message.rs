@@ -169,25 +169,25 @@ impl<'de> Deserialize<'de> for Message {
 }
 
 impl Request {
-    /// A request for the lsp-types method `R`. Params that serialize to `null` (`()` for
+    /// A request for the gen-lsp-types method `R`. Params that serialize to `null` (`()` for
     /// `shutdown`) are left out.
     #[must_use]
-    pub fn new<R: lsp_types::request::Request>(id: Id, params: R::Params) -> Self {
+    pub fn new<R: gen_lsp_types::Request>(id: Id, params: R::Params) -> Self {
         Self {
             id,
-            method: R::METHOD.to_owned(),
+            method: R::METHOD.as_str().to_owned(),
             params: to_params(&params),
         }
     }
 }
 
 impl Notification {
-    /// A notification for the lsp-types method `N`. Params that serialize to `null` (`()` for
+    /// A notification for the gen-lsp-types method `N`. Params that serialize to `null` (`()` for
     /// `exit`) are left out.
     #[must_use]
-    pub fn new<N: lsp_types::notification::Notification>(params: N::Params) -> Self {
+    pub fn new<N: gen_lsp_types::Notification>(params: N::Params) -> Self {
         Self {
-            method: N::METHOD.to_owned(),
+            method: N::METHOD.as_str().to_owned(),
             params: to_params(&params),
         }
     }
@@ -198,7 +198,7 @@ impl Response {
     #[must_use]
     pub fn ok(id: Id, result: impl Serialize) -> Self {
         let result =
-            serde_json::to_value(result).expect("lsp-types results always serialize to JSON");
+            serde_json::to_value(result).expect("gen-lsp-types results always serialize to JSON");
         Self {
             id: Some(id),
             result: Ok(result),
@@ -244,8 +244,8 @@ fn present<'de, D: Deserializer<'de>>(deserializer: D) -> Result<Option<Value>, 
 
 /// Params as a `Value`, with `null` meaning "absent".
 fn to_params(params: &impl Serialize) -> Option<Value> {
-    // lsp-types params are derived structs with string map keys, so conversion cannot fail.
-    match serde_json::to_value(params).expect("lsp-types params always serialize to JSON") {
+    // gen-lsp-types params are derived structs with string map keys, so conversion cannot fail.
+    match serde_json::to_value(params).expect("gen-lsp-types params always serialize to JSON") {
         Value::Null => None,
         params => Some(params),
     }
@@ -451,7 +451,7 @@ mod tests {
     /// `()` params (`shutdown`, `exit`) leave `params` off the wire.
     #[test]
     fn null_params_are_omitted_on_output() {
-        let shutdown = Message::Request(Request::new::<lsp_types::request::Shutdown>(
+        let shutdown = Message::Request(Request::new::<gen_lsp_types::ShutdownRequest>(
             Id::Number(2),
             (),
         ));
@@ -460,7 +460,7 @@ mod tests {
             json!({"jsonrpc": "2.0", "id": 2, "method": "shutdown"}),
             "shutdown carries no params",
         );
-        let exit = Message::Notification(Notification::new::<lsp_types::notification::Exit>(()));
+        let exit = Message::Notification(Notification::new::<gen_lsp_types::ExitNotification>(()));
         assert_eq!(
             wire(&exit),
             json!({"jsonrpc": "2.0", "method": "exit"}),
@@ -508,12 +508,12 @@ mod tests {
                 method: "textDocument/hover".into(),
                 params: Some(json!({"position": {"line": 1, "character": 2}})),
             }),
-            Message::Request(Request::new::<lsp_types::request::Shutdown>(
+            Message::Request(Request::new::<gen_lsp_types::ShutdownRequest>(
                 Id::Number(9),
                 (),
             )),
-            Message::Notification(Notification::new::<lsp_types::notification::Initialized>(
-                lsp_types::InitializedParams {},
+            Message::Notification(Notification::new::<gen_lsp_types::InitializedNotification>(
+                gen_lsp_types::InitializedParams {},
             )),
             Message::Response(Response::ok(Id::Number(4), json!({"items": []}))),
             Message::Response(Response::error(

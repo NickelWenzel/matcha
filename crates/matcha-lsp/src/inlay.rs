@@ -4,10 +4,7 @@
 use std::collections::HashMap;
 use std::ops::Range;
 
-use lsp_types::{
-    InlayHintKind, InlayHintLabel, InlayHintLabelPartTooltip, InlayHintTooltip, MarkupKind,
-    Position,
-};
+use gen_lsp_types::{InlayHintKind, Label, MarkupKind, Position, Tooltip};
 use matcha_core::intel::hover::escape_markdown;
 use matcha_core::{intel, Revision, Snapshot};
 use serde_json::Value;
@@ -29,7 +26,7 @@ pub(crate) struct Set {
 #[derive(Debug)]
 pub(crate) struct Stored {
     key: intel::inlay::Key,
-    hint: lsp_types::InlayHint,
+    hint: gen_lsp_types::InlayHint,
     /// Sent back verbatim by `inlayHint/resolve`: its `data` belongs to the server.
     raw: Value,
     /// A resolve reply has been absorbed.
@@ -39,7 +36,7 @@ pub(crate) struct Stored {
 /// One entry that decoded and lies in the clipped span, at its offset in the request snapshot.
 pub(crate) struct Fetched {
     offset: u32,
-    hint: lsp_types::InlayHint,
+    hint: gen_lsp_types::InlayHint,
     raw: Value,
 }
 
@@ -129,17 +126,17 @@ impl Stored {
         let own = self
             .part(part)
             .and_then(|part| part.tooltip.as_ref())
-            .and_then(part_tooltip);
-        own.or_else(|| self.hint.tooltip.as_ref().and_then(hint_tooltip))
+            .and_then(tooltip);
+        own.or_else(|| self.hint.tooltip.as_ref().and_then(tooltip))
     }
 
     /// The location of label part `part`, if it has one.
-    pub(crate) fn location(&self, part: u32) -> Option<&lsp_types::Location> {
+    pub(crate) fn location(&self, part: u32) -> Option<&gen_lsp_types::Location> {
         self.part(part)?.location.as_ref()
     }
 
     /// The edits that insert the hint into the text; empty when it has none.
-    pub(crate) fn text_edits(&self) -> &[lsp_types::TextEdit] {
+    pub(crate) fn text_edits(&self) -> &[gen_lsp_types::TextEdit] {
         self.hint.text_edits.as_deref().unwrap_or_default()
     }
 
@@ -156,12 +153,12 @@ impl Stored {
     /// Takes the tooltips of `resolved` that this hint lacks. The fetched label owns the parts: a
     /// resolve may restructure the label, so part tooltips are taken only from the same label.
     /// Links and text edits never change after install.
-    pub(crate) fn absorb(&mut self, resolved: lsp_types::InlayHint) {
+    pub(crate) fn absorb(&mut self, resolved: gen_lsp_types::InlayHint) {
         self.resolved = true;
         if self.hint.tooltip.is_none() {
             self.hint.tooltip = resolved.tooltip;
         }
-        if let (InlayHintLabel::LabelParts(mine), InlayHintLabel::LabelParts(theirs)) =
+        if let (Label::InlayHintLabelPartList(mine), Label::InlayHintLabelPartList(theirs)) =
             (&mut self.hint.label, resolved.label)
         {
             let same = mine.len() == theirs.len()
@@ -177,10 +174,10 @@ impl Stored {
     }
 
     /// Label part `part`; a string label has none.
-    fn part(&self, part: u32) -> Option<&lsp_types::InlayHintLabelPart> {
+    fn part(&self, part: u32) -> Option<&gen_lsp_types::InlayHintLabelPart> {
         match &self.hint.label {
-            InlayHintLabel::LabelParts(parts) => parts.get(part as usize),
-            InlayHintLabel::String(_) => None,
+            Label::InlayHintLabelPartList(parts) => parts.get(part as usize),
+            Label::String(_) => None,
         }
     }
 }
@@ -207,7 +204,7 @@ pub(crate) fn decode(
     entries
         .into_iter()
         .filter_map(|raw| {
-            let hint: lsp_types::InlayHint = serde_json::from_value(raw.clone()).ok()?;
+            let hint: gen_lsp_types::InlayHint = serde_json::from_value(raw.clone()).ok()?;
             let line = hint.position.line;
             if line < first || line > last || line >= snapshot.line_count() {
                 return None;
@@ -222,13 +219,13 @@ pub(crate) fn decode(
 fn convert(fetched: &Fetched, key: intel::inlay::Key) -> Option<intel::inlay::Placed> {
     let hint = &fetched.hint;
     let label: Vec<intel::inlay::Part> = match &hint.label {
-        InlayHintLabel::String(text) => {
+        Label::String(text) => {
             vec![intel::inlay::Part::new(
                 text.clone(),
                 intel::inlay::Link::None,
             )]
         }
-        InlayHintLabel::LabelParts(parts) => parts
+        Label::InlayHintLabelPartList(parts) => parts
             .iter()
             .map(|part| {
                 let link = if part.location.is_some() {
@@ -241,8 +238,8 @@ fn convert(fetched: &Fetched, key: intel::inlay::Key) -> Option<intel::inlay::Pl
             .collect(),
     };
     let kind = match hint.kind {
-        Some(InlayHintKind::TYPE) => intel::inlay::Kind::Type,
-        Some(InlayHintKind::PARAMETER) => intel::inlay::Kind::Parameter,
+        Some(InlayHintKind::Type) => intel::inlay::Kind::Type,
+        Some(InlayHintKind::Parameter) => intel::inlay::Kind::Parameter,
         _ => intel::inlay::Kind::Other,
     };
     let left = hint.padding_left == Some(true);
@@ -285,30 +282,25 @@ fn convert(fetched: &Fetched, key: intel::inlay::Key) -> Option<intel::inlay::Pl
     Some(intel::inlay::Placed::new(fetched.offset, hint))
 }
 
-fn label_texts(label: &InlayHintLabel) -> Vec<&str> {
+fn label_texts(label: &Label) -> Vec<&str> {
     match label {
-        InlayHintLabel::String(text) => vec![text.as_str()],
-        InlayHintLabel::LabelParts(parts) => parts.iter().map(|part| part.value.as_str()).collect(),
+        Label::String(text) => vec![text.as_str()],
+        Label::InlayHintLabelPartList(parts) => {
+            parts.iter().map(|part| part.value.as_str()).collect()
+        }
     }
 }
 
 /// Same position, kind and label texts: the same hint, refetched.
-fn same_hint(a: &lsp_types::InlayHint, b: &lsp_types::InlayHint) -> bool {
+fn same_hint(a: &gen_lsp_types::InlayHint, b: &gen_lsp_types::InlayHint) -> bool {
     a.position == b.position && a.kind == b.kind && label_texts(&a.label) == label_texts(&b.label)
 }
 
 /// The spec makes a bare string tooltip plain text.
-fn hint_tooltip(tooltip: &InlayHintTooltip) -> Option<String> {
+fn tooltip(tooltip: &Tooltip) -> Option<String> {
     match tooltip {
-        InlayHintTooltip::String(text) => card(&MarkupKind::PlainText, text),
-        InlayHintTooltip::MarkupContent(content) => card(&content.kind, &content.value),
-    }
-}
-
-fn part_tooltip(tooltip: &InlayHintLabelPartTooltip) -> Option<String> {
-    match tooltip {
-        InlayHintLabelPartTooltip::String(text) => card(&MarkupKind::PlainText, text),
-        InlayHintLabelPartTooltip::MarkupContent(content) => card(&content.kind, &content.value),
+        Tooltip::String(text) => card(&MarkupKind::PlainText, text),
+        Tooltip::MarkupContent(content) => card(&content.kind, &content.value),
     }
 }
 
@@ -316,7 +308,7 @@ fn part_tooltip(tooltip: &InlayHintLabelPartTooltip) -> Option<String> {
 fn card(kind: &MarkupKind, text: &str) -> Option<String> {
     let markdown = match kind {
         MarkupKind::Markdown => markdown::to_hover(text),
-        MarkupKind::PlainText => escape_markdown(text),
+        _ => escape_markdown(text),
     };
     (!markdown.trim().is_empty()).then_some(markdown)
 }

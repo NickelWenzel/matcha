@@ -84,9 +84,12 @@ mod native {
     /// A notification no server knows, big enough to fill a pipe quickly.
     enum Blob {}
 
-    impl matcha_lsp::lsp_types::notification::Notification for Blob {
+    impl matcha_lsp::gen_lsp_types::Notification for Blob {
         type Params = String;
-        const METHOD: &'static str = "matcha-test/blob";
+        const METHOD: matcha_lsp::gen_lsp_types::LspNotificationMethod<'static> =
+            matcha_lsp::gen_lsp_types::LspNotificationMethod::Custom("matcha-test/blob");
+        const MESSAGE_DIRECTION: matcha_lsp::gen_lsp_types::MessageDirection =
+            matcha_lsp::gen_lsp_types::MessageDirection::ClientToServer;
     }
 
     impl Harness {
@@ -194,7 +197,7 @@ mod native {
     }
 
     /// `name` in the temp directory, as a URI.
-    pub fn temp_uri(name: &str) -> matcha_lsp::lsp_types::Uri {
+    pub fn temp_uri(name: &str) -> matcha_lsp::gen_lsp_types::Uri {
         matcha_lsp::uri::from_path(&std::env::temp_dir().join(name))
             .expect("the temp directory is absolute and UTF-8")
     }
@@ -1388,7 +1391,7 @@ mod native {
             let mut stdout = io::stdout().lock();
             for name in ["fake.rs", super::UNOPENED] {
                 let uri = super::temp_uri(name);
-                write(&mut stdout, publish(&json!(uri.as_str()), &Value::Null, "grandchild"));
+                write(&mut stdout, publish(&json!(uri.0), &Value::Null, "grandchild"));
             }
             log.line("published");
             thread::sleep(std::time::Duration::from_secs(1));

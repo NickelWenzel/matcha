@@ -1,10 +1,8 @@
 //! Results that name documents by URI: definition locations and workspace edits.
 //!
-//! URIs decode as strings and parse per entry, because an entry whose URI does not parse is
-//! skipped, while lsp-types' `Uri` fails the whole result. Everything else decodes strictly: a
-//! rename that half decoded would be half a rename.
+//! Both decode strictly: a rename that half decoded would be half a rename.
 
-use lsp_types::request::Request;
+use gen_lsp_types::{Request, Uri};
 use serde::Deserialize;
 use serde_json::Value;
 
@@ -19,18 +17,18 @@ pub(crate) enum Locations {
     Many(Vec<Location>),
 }
 
-/// One entry of a definition result, with its URI unparsed.
+/// One entry of a definition result.
 #[derive(Debug, Deserialize)]
 #[serde(untagged)]
 pub(crate) enum Location {
     #[serde(rename_all = "camelCase")]
     Link {
-        target_uri: String,
-        target_selection_range: lsp_types::Range,
+        target_uri: Uri,
+        target_selection_range: gen_lsp_types::Range,
     },
     Plain {
-        uri: String,
-        range: lsp_types::Range,
+        uri: Uri,
+        range: gen_lsp_types::Range,
     },
 }
 
@@ -45,43 +43,40 @@ pub(crate) struct Edit {
 pub(crate) struct File {
     key: uri::Key,
     version: Option<i32>,
-    edits: Vec<lsp_types::TextEdit>,
+    edits: Vec<gen_lsp_types::TextEdit>,
 }
 
-/// A `TextDocumentEdit` with its URI unparsed. An `AnnotatedTextEdit` carries `TextEdit`'s
+/// A `TextDocumentEdit`. An `AnnotatedTextEdit` carries `TextEdit`'s
 /// fields, so it decodes as one, without its `annotationId`.
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct DocumentEdit {
     text_document: Document,
-    edits: Vec<lsp_types::TextEdit>,
+    edits: Vec<gen_lsp_types::TextEdit>,
 }
 
 #[derive(Deserialize)]
 struct Document {
-    uri: String,
+    uri: Uri,
     version: Option<i32>,
 }
 
 impl Locations {
-    /// The first entry whose URI parses, as its document and range. A `LocationLink` points at
-    /// its `targetSelectionRange`, the name rather than the whole definition.
-    pub(crate) fn first(self) -> Option<(uri::Key, lsp_types::Range)> {
-        let entries = match self {
-            Locations::One(entry) => vec![entry],
-            Locations::Many(entries) => entries,
+    /// The first entry, as its document and range. A `LocationLink` points at its
+    /// `targetSelectionRange`, the name rather than the whole definition.
+    pub(crate) fn first(self) -> Option<(uri::Key, gen_lsp_types::Range)> {
+        let entry = match self {
+            Locations::One(entry) => entry,
+            Locations::Many(entries) => entries.into_iter().next()?,
         };
-        entries.into_iter().find_map(|entry| {
-            let (uri, range) = match entry {
-                Location::Link {
-                    target_uri,
-                    target_selection_range,
-                } => (target_uri, target_selection_range),
-                Location::Plain { uri, range } => (uri, range),
-            };
-            let uri = uri.parse::<lsp_types::Uri>().ok()?;
-            Some((uri::Key::new(&uri), range))
-        })
+        let (uri, range) = match entry {
+            Location::Link {
+                target_uri,
+                target_selection_range,
+            } => (target_uri, target_selection_range),
+            Location::Plain { uri, range } => (uri, range),
+        };
+        Some((uri::Key::new(&uri), range))
     }
 }
 
@@ -113,10 +108,7 @@ impl Edit {
                     text_document,
                     edits,
                 } = DocumentEdit::deserialize(entry).map_err(decode)?;
-                let Ok(uri) = text_document.uri.parse::<lsp_types::Uri>() else {
-                    continue;
-                };
-                edit.merge(uri::Key::new(&uri), text_document.version, edits)?;
+                edit.merge(uri::Key::new(&text_document.uri), text_document.version, edits)?;
             }
         } else if let Some(changes) = result.get("changes") {
             let map = changes
@@ -124,11 +116,8 @@ impl Edit {
                 .ok_or_else(|| malformed("`changes` is an object"))?;
             let mut entries = Vec::with_capacity(map.len());
             for (uri, edits) in map {
-                let edits = Vec::<lsp_types::TextEdit>::deserialize(edits).map_err(decode)?;
-                let Ok(uri) = uri.parse::<lsp_types::Uri>() else {
-                    continue;
-                };
-                entries.push((uri::Key::new(&uri), edits));
+                let edits = Vec::<gen_lsp_types::TextEdit>::deserialize(edits).map_err(decode)?;
+                entries.push((uri::Key::new(&Uri::from(uri.as_str())), edits));
             }
             // The map has no order of its own.
             entries.sort_by(|(a, _), (b, _)| a.as_str().cmp(b.as_str()));
@@ -154,7 +143,7 @@ impl Edit {
         &mut self,
         key: uri::Key,
         version: Option<i32>,
-        edits: Vec<lsp_types::TextEdit>,
+        edits: Vec<gen_lsp_types::TextEdit>,
     ) -> Result<(), Error> {
         let Some(file) = self.files.iter_mut().find(|file| file.key == key) else {
             self.files.push(File {
@@ -186,14 +175,14 @@ impl File {
     }
 
     /// The document and its edits.
-    pub(crate) fn into_parts(self) -> (uri::Key, Vec<lsp_types::TextEdit>) {
+    pub(crate) fn into_parts(self) -> (uri::Key, Vec<gen_lsp_types::TextEdit>) {
         (self.key, self.edits)
     }
 }
 
 fn decode(source: serde_json::Error) -> Error {
     Error::Decode {
-        method: lsp_types::request::Rename::METHOD.to_owned(),
+        method: gen_lsp_types::RenameRequest::METHOD.as_str().to_owned(),
         source: std::sync::Arc::new(source),
     }
 }
@@ -213,22 +202,22 @@ mod tests {
         json!({"start": {"line": 0, "character": start}, "end": {"line": 0, "character": end}})
     }
 
-    fn first(result: Value) -> Option<(String, lsp_types::Range)> {
+    fn first(result: Value) -> Option<(String, gen_lsp_types::Range)> {
         serde_json::from_value::<Option<Locations>>(result)
             .expect("the result decodes")
             .and_then(Locations::first)
             .map(|(key, range)| (key.as_str().to_owned(), range))
     }
 
-    /// An entry whose URI does not parse is skipped, and the next one answers.
+    /// The first entry answers.
     #[test]
-    fn first_parseable_location_wins() {
+    fn first_location_wins() {
         let (key, found) = first(json!([
-            {"uri": "file:///bad path.rs", "range": range(0, 1)},
             {"uri": "file:///w/b.rs", "range": range(3, 8)},
+            {"uri": "file:///w/c.rs", "range": range(0, 1)},
         ]))
-        .expect("the second entry parses");
-        assert_eq!(key, "file:///w/b.rs", "the parseable entry wins");
+        .expect("the list has an entry");
+        assert_eq!(key, "file:///w/b.rs", "the first entry wins");
         assert_eq!(found.start.character, 3, "with its own range");
         assert_eq!(first(json!(null)), None, "null has no location");
         assert_eq!(first(json!([])), None, "an empty list has no location");
@@ -371,25 +360,6 @@ mod tests {
         }]}));
         assert_eq!(files[0].version(), None, "a null version");
         assert_eq!(texts(files.remove(0)), ["x"], "the annotated edit");
-    }
-
-    /// An entry whose URI does not parse is skipped, in either shape.
-    #[test]
-    fn entries_with_unparseable_uris_are_skipped() {
-        let files_changed = files(json!({"documentChanges": [
-            document_edit("file:///bad path.rs", json!(1), &["x"]),
-            document_edit("file:///w/a.rs", json!(1), &["a"]),
-        ]}));
-        assert_eq!(
-            keys(&files_changed),
-            ["file:///w/a.rs"],
-            "only the good entry"
-        );
-        let files_mapped = files(json!({"changes": {
-            "file:///bad path.rs": [text_edit("x")],
-            "file:///w/a.rs": [text_edit("a")],
-        }}));
-        assert_eq!(keys(&files_mapped), ["file:///w/a.rs"], "only the good key");
     }
 
     /// `null` is no edit, and a malformed edit is a decode error.
